@@ -18,6 +18,7 @@
  */
 package org.apache.pulsar.io.elasticsearch.client.elastic;
 
+import co.elastic.clients.elasticsearch.ElasticsearchAsyncClient;
 import co.elastic.clients.elasticsearch.ElasticsearchClient;
 import co.elastic.clients.elasticsearch._types.ElasticsearchException;
 import co.elastic.clients.elasticsearch._types.FieldValue;
@@ -26,6 +27,8 @@ import co.elastic.clients.elasticsearch._types.SlicedScroll;
 import co.elastic.clients.elasticsearch._types.SortOptions;
 import co.elastic.clients.elasticsearch._types.Time;
 import co.elastic.clients.elasticsearch._types.query_dsl.Query;
+import co.elastic.clients.elasticsearch.core.ClearScrollRequest;
+import co.elastic.clients.elasticsearch.core.ClearScrollResponse;
 import co.elastic.clients.elasticsearch.core.ClosePointInTimeRequest;
 import co.elastic.clients.elasticsearch.core.ClosePointInTimeResponse;
 import co.elastic.clients.elasticsearch.core.DeleteRequest;
@@ -34,6 +37,8 @@ import co.elastic.clients.elasticsearch.core.IndexRequest;
 import co.elastic.clients.elasticsearch.core.IndexResponse;
 import co.elastic.clients.elasticsearch.core.OpenPointInTimeRequest;
 import co.elastic.clients.elasticsearch.core.OpenPointInTimeResponse;
+import co.elastic.clients.elasticsearch.core.ScrollRequest;
+import co.elastic.clients.elasticsearch.core.ScrollResponse;
 import co.elastic.clients.elasticsearch.core.SearchRequest;
 import co.elastic.clients.elasticsearch.core.SearchResponse;
 import co.elastic.clients.elasticsearch.core.search.PointInTimeReference;
@@ -46,19 +51,19 @@ import co.elastic.clients.elasticsearch.indices.RefreshRequest;
 import co.elastic.clients.json.jackson.JacksonJsonpMapper;
 import co.elastic.clients.transport.ElasticsearchTransport;
 import co.elastic.clients.transport.rest_client.RestClientTransport;
-import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ValueNode;
 import com.google.common.annotations.VisibleForTesting;
 import java.io.IOException;
 import java.io.StringReader;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
+import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.http.HttpHost;
@@ -72,9 +77,8 @@ import org.elasticsearch.client.RestClientBuilder;
 public class ElasticSearchJavaRestClient extends RestClient {
 
     private final ElasticsearchClient client;
-    private final ObjectMapper objectMapper = new ObjectMapper()
-            .configure(SerializationFeature.INDENT_OUTPUT, false)
-            .setSerializationInclusion(JsonInclude.Include.ALWAYS);
+
+    private final ElasticsearchAsyncClient asyncClient;
     private BulkProcessor bulkProcessor;
     private ElasticsearchTransport transport;
 
@@ -109,6 +113,7 @@ public class ElasticSearchJavaRestClient extends RestClient {
                 });
         transport = new RestClientTransport(builder.build(), new JacksonJsonpMapper(objectMapper));
         client = new ElasticsearchClient(transport);
+        asyncClient = new ElasticsearchAsyncClient(transport);
         if (elasticSearchConfig.isBulkEnabled()) {
             bulkProcessor = new ElasticBulkProcessor(elasticSearchConfig, client, bulkProcessorListener);
         } else {
@@ -210,7 +215,7 @@ public class ElasticSearchJavaRestClient extends RestClient {
     public String openPit(String index, int keepAliveMin) throws IOException {
         OpenPointInTimeRequest openRequest = new OpenPointInTimeRequest.Builder()
             .index(index)
-            .keepAlive(new Time.Builder().time(keepAliveMin+"m").build())
+            .keepAlive(new Time.Builder().time(keepAliveMin + "m").build())
             .build();
         OpenPointInTimeResponse openResponse = client.openPointInTime(openRequest);
         return openResponse.id();
@@ -224,40 +229,64 @@ public class ElasticSearchJavaRestClient extends RestClient {
         return closeResponse.succeeded();
     }
 
-    public JsonNode searchWithPit(String pit, int keepAliveMin, String query, String searchAfter,
-        String sort, int size, int maxSlices, int sliceId) throws IOException {
-        SearchRequest.Builder request = new SearchRequest.Builder();
-
+    public CompletableFuture<SearchResponse<Map>> searchWithPit(String pit, int keepAliveMin, String query, Object[] searchAfterArr,
+                                           String sort, int size, int maxSlices, int sliceId) throws IOException {
+        SearchRequest.Builder request = buildSearchRequest(query, sort, size, maxSlices, sliceId);
         if (StringUtils.isNotBlank(pit)) {
             PointInTimeReference pitRef = new PointInTimeReference.Builder()
                 .id(pit)
-                .keepAlive(new Time.Builder().time(keepAliveMin+"m").build())
+                .keepAlive(new Time.Builder().time(keepAliveMin + "m").build())
                 .build();
             request.pit(pitRef);
         }
-        if (maxSlices > 1) {
-            SlicedScroll slices = new SlicedScroll.Builder()
-                .max(maxSlices)
-                .id(Integer.toString(sliceId))
-                .build();
-            request.slice(slices);
-        }
-        if (StringUtils.isNotBlank(searchAfter)) {
-            ArrayNode searchAfterJson = (ArrayNode) objectMapper.readTree(searchAfter);
-            List<FieldValue> fieldValues = new ArrayList<>();
-            searchAfterJson.forEach(searchAfterVal -> {
-                FieldValue fieldValue = getFieldValue(searchAfterVal);
-                fieldValues.add(fieldValue);
-            });
+        if (searchAfterArr != null && searchAfterArr.length > 0) {
+            List<FieldValue> fieldValues = Arrays.stream(searchAfterArr)
+                .map(this::getFieldValFromObj)
+                .collect(Collectors.toList());
             request.searchAfter(fieldValues);
         }
-        request.size(size);
+        return asyncClient.search(request.build(), Map.class);
+    }
 
+    public CompletableFuture<SearchResponse<Map>> startScrollSearch(int keepAliveMin, String query,
+                                                                    String sort, int size, int maxSlices, int sliceId)
+            throws IOException {
+        SearchRequest.Builder request = buildSearchRequest(query, sort, size, maxSlices, sliceId);
+        request.scroll(new Time.Builder().time(keepAliveMin + "m").build());
+        return asyncClient.search(request.build(), Map.class);
+    }
+
+    public CompletableFuture<ScrollResponse<Map>> scrollResults(String scrollId, int keepAliveMin) throws IOException {
+        ScrollRequest scrollRequest = new ScrollRequest.Builder()
+                .scrollId(scrollId)
+                .scroll(new Time.Builder().time(keepAliveMin + "m").build())
+                .build();
+        return asyncClient.scroll(scrollRequest, Map.class);
+    }
+
+    public boolean closeScroll(String scrollId) throws IOException {
+        ClearScrollRequest clearScrollRequest = new ClearScrollRequest.Builder()
+                .scrollId(scrollId)
+                .build();
+        ClearScrollResponse clearScrollResponse = client.clearScroll(clearScrollRequest);
+        return clearScrollResponse.succeeded();
+    }
+
+    public SearchRequest.Builder buildSearchRequest(String query, String sort, int size, int maxSlices, int sliceId)
+            throws IOException {
+        SearchRequest.Builder request = new SearchRequest.Builder();
+        request.size(size);
+        if (maxSlices > 1) {
+            SlicedScroll slices = new SlicedScroll.Builder()
+                    .max(maxSlices)
+                    .id(Integer.toString(sliceId))
+                    .build();
+            request.slice(slices);
+        }
         if (StringUtils.isNotBlank(query)) {
             Query q = new Query.Builder().withJson(new StringReader(query)).build();
             request.query(q);
         }
-
         if (StringUtils.isNotBlank(sort)) {
             JsonNode sortJsonNode = objectMapper.readTree(sort);
             List<SortOptions> sortOptions = new ArrayList<>();
@@ -265,21 +294,21 @@ public class ElasticSearchJavaRestClient extends RestClient {
                 ArrayNode sortListJson = (ArrayNode) sortJsonNode;
                 sortListJson.forEach(sortObj -> {
                     SortOptions sortOption = new SortOptions.Builder()
-                        .withJson(new StringReader(sortObj.toString()))
-                        .build();
+                            .withJson(new StringReader(sortObj.toString()))
+                            .build();
                     sortOptions.add(sortOption);
                 });
             } else {
                 SortOptions sortOption = new SortOptions.Builder()
-                    .withJson(new StringReader(sortJsonNode.toString()))
-                    .build();
+                        .withJson(new StringReader(sortJsonNode.toString()))
+                        .build();
                 sortOptions.add(sortOption);
             }
             request.sort(sortOptions);
         }
-        SearchResponse<Map> searchResponse = client.search(request.build(), Map.class);
-        return objectMapper.readTree(searchResponse.toString());
+        return request;
     }
+
 
     @Override
     public BulkProcessor getBulkProcessor() {
@@ -326,5 +355,19 @@ public class ElasticSearchJavaRestClient extends RestClient {
             }
         }
         return null;
+    }
+
+    private FieldValue getFieldValFromObj(Object value){
+        if (value instanceof Double) {
+            return FieldValue.of((Double) value);
+        } else if (value instanceof Integer) {
+            return FieldValue.of((Integer) value);
+        } else if (value instanceof Long) {
+            return FieldValue.of((Long) value);
+        } else if (value instanceof Boolean) {
+            return FieldValue.of((Boolean) value);
+        } else {
+            return FieldValue.of(value.toString());
+        }
     }
 }

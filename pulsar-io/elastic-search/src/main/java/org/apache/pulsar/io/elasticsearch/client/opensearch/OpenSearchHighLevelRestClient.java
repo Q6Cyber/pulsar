@@ -18,19 +18,26 @@
  */
 package org.apache.pulsar.io.elasticsearch.client.opensearch;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.google.common.annotations.VisibleForTesting;
 import java.io.IOException;
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.http.HttpHost;
+import org.apache.http.util.EntityUtils;
 import org.apache.pulsar.functions.api.Record;
 import org.apache.pulsar.io.elasticsearch.ElasticSearchConfig;
 import org.apache.pulsar.io.elasticsearch.RandomExponentialRetry;
 import org.apache.pulsar.io.elasticsearch.client.BulkProcessor;
 import org.apache.pulsar.io.elasticsearch.client.RestClient;
+import org.opensearch.action.ActionListener;
 import org.opensearch.action.DocWriteResponse;
 import org.opensearch.action.admin.indices.delete.DeleteIndexRequest;
 import org.opensearch.action.admin.indices.refresh.RefreshRequest;
@@ -40,10 +47,15 @@ import org.opensearch.action.delete.DeleteRequest;
 import org.opensearch.action.delete.DeleteResponse;
 import org.opensearch.action.index.IndexRequest;
 import org.opensearch.action.index.IndexResponse;
+import org.opensearch.action.search.ClearScrollRequest;
+import org.opensearch.action.search.ClearScrollResponse;
 import org.opensearch.action.search.SearchRequest;
 import org.opensearch.action.search.SearchResponse;
+import org.opensearch.action.search.SearchScrollRequest;
+import org.opensearch.client.Request;
 import org.opensearch.client.RequestOptions;
 import org.opensearch.client.Requests;
+import org.opensearch.client.Response;
 import org.opensearch.client.RestClientBuilder;
 import org.opensearch.client.RestHighLevelClient;
 import org.opensearch.client.indices.CreateIndexRequest;
@@ -57,7 +69,12 @@ import org.opensearch.common.unit.TimeValue;
 import org.opensearch.common.xcontent.XContentType;
 import org.opensearch.index.query.QueryBuilder;
 import org.opensearch.index.query.QueryBuilders;
+import org.opensearch.search.Scroll;
+import org.opensearch.search.builder.PointInTimeBuilder;
 import org.opensearch.search.builder.SearchSourceBuilder;
+import org.opensearch.search.slice.SliceBuilder;
+import org.opensearch.search.sort.SortBuilder;
+
 
 @Slf4j
 public class OpenSearchHighLevelRestClient extends RestClient implements BulkProcessor {
@@ -289,6 +306,127 @@ public class OpenSearchHighLevelRestClient extends RestClient implements BulkPro
                         .source(new SearchSourceBuilder().query(queryBuilder))  ,
                 RequestOptions.DEFAULT);
     }
+
+//    @Override
+    public String openPit(String index, int keepAliveMin) throws IOException {
+        Request request = new Request("POST", "/%s/_search/point_in_time".formatted(index));
+        request.addParameter("keep_alive", "%sm".formatted(keepAliveMin));
+        Response response = client.getLowLevelClient().performRequest(request);
+        if (response.getStatusLine().getStatusCode() == 200) {
+            String responseStr = EntityUtils.toString(response.getEntity());
+            JsonNode jsonResponse = objectMapper.readTree(responseStr);
+            return jsonResponse.get("pit_id").asText();
+        } else {
+            throw new IOException("Unable to open pit: " + response.getStatusLine().getReasonPhrase());
+        }
+    }
+
+//    @Override
+    public boolean closePit(String pit) throws IOException {
+        Request request = new Request("DELETE", "/_search/point_in_time");
+        request.setJsonEntity("{\"pit_id\": [\"%s\"]}".formatted(pit));
+        Response response = client.getLowLevelClient().performRequest(request);
+        if (response.getStatusLine().getStatusCode() == 200) {
+            String responseStr = EntityUtils.toString(response.getEntity());
+            JsonNode jsonResponse = objectMapper.readTree(responseStr);
+            ArrayNode pitsResp = (ArrayNode) jsonResponse.get("pits");
+            AtomicBoolean success = new AtomicBoolean();
+            pitsResp.forEach(jsonObj -> {
+                if (jsonObj.get("pit_id").asText().equals(pit)) {
+                    success.set(jsonObj.get("successful").asBoolean());
+                }
+            });
+            return success.get();
+        } else {
+            throw new IOException("Unable to close pit: " + response.getStatusLine().getReasonPhrase());
+        }
+    }
+
+//    @Override
+    public CompletableFuture<SearchResponse> searchWithPit(String pit, int keepAliveMin, String query,
+                                                           Object[] searchAfterArr, String sort, int size,
+                                                           int maxSlices, int sliceId) throws IOException {
+        SearchSourceBuilder searchSourceBuilder = buildSearchSource(query, sort, size, maxSlices, sliceId);
+        if (StringUtils.isNotBlank(pit)){
+            PointInTimeBuilder pitBuilder = new PointInTimeBuilder(pit)
+                .setKeepAlive(TimeValue.timeValueMinutes(keepAliveMin));
+            searchSourceBuilder.pointInTimeBuilder(pitBuilder);
+        }
+        if (searchAfterArr != null && searchAfterArr.length > 0) {
+            searchSourceBuilder.searchAfter(searchAfterArr);
+        }
+
+        SearchRequest searchRequest = new SearchRequest(config.getIndexName());
+        searchRequest.source(searchSourceBuilder);
+        CompletableFuture<SearchResponse> responseFuture = new CompletableFuture<>();
+        client.searchAsync(searchRequest, RequestOptions.DEFAULT, buildActionListener(responseFuture));
+        return responseFuture;
+    }
+
+    public CompletableFuture<SearchResponse> startScrollSearch(int keepAliveMin, String query,
+                                                               String sort, int size, int maxSlices, int sliceId)
+            throws IOException {
+        SearchSourceBuilder searchSourceBuilder = buildSearchSource(query, sort, size, maxSlices, sliceId);
+        final Scroll scroll = new Scroll(TimeValue.timeValueMinutes(keepAliveMin));
+        final CompletableFuture<SearchResponse> responseFuture = new CompletableFuture<>();
+        ActionListener<SearchResponse> actionListener = buildActionListener(responseFuture);
+        SearchRequest searchRequest = new SearchRequest(config.getIndexName());
+        searchRequest.scroll(scroll);
+        searchRequest.source(searchSourceBuilder);
+        client.searchAsync(searchRequest, RequestOptions.DEFAULT, actionListener);
+        return responseFuture;
+    }
+
+    public CompletableFuture<SearchResponse> scrollResults(String scrollId, int keepAliveMin) throws IOException {
+        final Scroll scroll = new Scroll(TimeValue.timeValueMinutes(keepAliveMin));
+        final CompletableFuture<SearchResponse> responseFuture = new CompletableFuture<>();
+        ActionListener<SearchResponse> actionListener = buildActionListener(responseFuture);
+        SearchScrollRequest scrollRequest = new SearchScrollRequest(scrollId);
+        scrollRequest.scroll(scroll);
+        client.searchScrollAsync(scrollRequest, RequestOptions.DEFAULT, actionListener);
+        return responseFuture;
+    }
+
+    public boolean closeScroll(String scrollId) throws IOException {
+        ClearScrollRequest request = new ClearScrollRequest();
+        request.addScrollId(scrollId);
+        ClearScrollResponse response = client.clearScroll(request, RequestOptions.DEFAULT);
+        return response.isSucceeded();
+    }
+
+    public SearchSourceBuilder buildSearchSource(String query, String sort, int size, int maxSlices, int sliceId)
+            throws IOException {
+        SearchSourceBuilder searchSourceBuilder = new SearchSourceBuilder();
+
+        if (StringUtils.isNotBlank(query)) {
+            searchSourceBuilder.query(QueryBuilders.wrapperQuery(query));
+        }
+        searchSourceBuilder.size(size);
+        if (maxSlices > 1){
+            searchSourceBuilder.slice(new SliceBuilder(sliceId, maxSlices));
+        }
+        if (StringUtils.isNotBlank(sort)) {
+            List<SortBuilder<?>> sortBuilders = OpenSearchUtil.parseSortJson(sort);
+            if (sortBuilders != null && !sortBuilders.isEmpty()){
+                sortBuilders.forEach(searchSourceBuilder::sort);
+            }
+        }
+        return searchSourceBuilder;
+    }
+
+    public ActionListener<SearchResponse> buildActionListener(CompletableFuture<SearchResponse> responseFuture){
+        return new ActionListener<>() {
+            @Override
+            public void onResponse(SearchResponse searchResponse) {
+                responseFuture.complete(searchResponse);
+            }
+
+            @Override
+            public void onFailure(Exception e) {
+                responseFuture.completeExceptionally(e);
+            }
+        };
+    }
     @Override
     public BulkProcessor getBulkProcessor() {
         return this;
@@ -357,4 +495,5 @@ public class OpenSearchHighLevelRestClient extends RestClient implements BulkPro
     public org.opensearch.action.bulk.BulkProcessor getInternalBulkProcessor() {
         return internalBulkProcessor;
     }
+
 }
