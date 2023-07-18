@@ -229,8 +229,9 @@ public class ElasticSearchJavaRestClient extends RestClient {
         return closeResponse.succeeded();
     }
 
-    public CompletableFuture<SearchResponse<Map>> searchWithPit(String pit, int keepAliveMin, String query, Object[] searchAfterArr,
-                                           String sort, int size, int maxSlices, int sliceId) throws IOException {
+    public CompletableFuture<SearchResponse<Map>> searchWithPit(String pit, int keepAliveMin, String query,
+                                                                Object[] searchAfterArr, String sort, int size,
+                                                                int maxSlices, int sliceId) throws IOException {
         SearchRequest.Builder request = buildSearchRequest(query, sort, size, maxSlices, sliceId);
         if (StringUtils.isNotBlank(pit)) {
             PointInTimeReference pitRef = new PointInTimeReference.Builder()
