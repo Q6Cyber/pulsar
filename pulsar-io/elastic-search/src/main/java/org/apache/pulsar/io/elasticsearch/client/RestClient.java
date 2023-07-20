@@ -108,7 +108,7 @@ public abstract class RestClient implements Closeable {
 
     public abstract long totalHits(String index) throws IOException;
     public abstract long totalHits(String index, String query) throws IOException;
-
+    public abstract SlicedSearchProvider getSlicedSearchProvider();
     public abstract BulkProcessor getBulkProcessor();
 
     public class ConfigCallback implements RestClientBuilder.HttpClientConfigCallback,

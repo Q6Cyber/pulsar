@@ -28,8 +28,7 @@ import java.util.Map;
 import java.util.TreeMap;
 import java.util.function.Consumer;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.pulsar.functions.api.Record;
-import org.apache.pulsar.io.core.BatchSource;
+import org.apache.pulsar.io.core.BatchPushSource;
 import org.apache.pulsar.io.core.SourceContext;
 import org.apache.pulsar.io.core.annotations.Connector;
 import org.apache.pulsar.io.core.annotations.IOType;
@@ -42,12 +41,18 @@ import org.apache.pulsar.io.core.annotations.IOType;
     configClass = ElasticSearchConfig.class
 )
 @Slf4j
-public class ElasticSearchBatchSource implements BatchSource<byte[]> {
+public class ElasticSearchBatchSource extends BatchPushSource<byte[]> {
 
   private ElasticSearchBatchSourceConfig elasticSearchConfig;
   private ElasticSearchClient elasticsearchClient;
   private final ObjectMapper objectMapper = new ObjectMapper();
   private ObjectMapper sortedObjectMapper;
+
+  @Override
+  public int getQueueLength() {
+    return 20_000; //set for 2 x max batch size.
+    // Cannot be set based on config because it is called from parent constructor before open is called.
+  }
 
   @Override
   public void open(Map<String, Object> config, SourceContext context)
@@ -87,12 +92,4 @@ public class ElasticSearchBatchSource implements BatchSource<byte[]> {
   public void prepare(byte[] task) throws Exception {
 
   }
-
-  @Override
-  public Record<byte[]> readNext() throws Exception {
-    return null;
-  }
-
-
-
 }
