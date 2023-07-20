@@ -76,26 +76,4 @@ public class SlicedSearchTask implements Serializable {
     return this.searchAfter != null && this.searchAfter.length > 0;
   }
 
-//  public SlicedSearchTask updatePitTask(String pitId){
-//    if (this.pagingType != ElasticSearchBatchSourceConfig.PagingType.PIT){
-//      throw new IllegalStateException("This is not a PIT task");
-//    }
-//    setPitId(pitId);
-//    return this;
-//  }
-//
-//  public SlicedSearchTask updateSearchAfter(Object[] searchAfter){
-//    setSearchAfter(searchAfter);
-//    return this;
-//  }
-//
-//  public SlicedSearchTask updateScrollTask(String scrollId){
-//    if (this.pagingType != ElasticSearchBatchSourceConfig.PagingType.SCROLL){
-//      throw new IllegalStateException("This is not a scroll task");
-//    }
-//    setScrollId(scrollId);
-//    return this;
-//  }
-
-
 }

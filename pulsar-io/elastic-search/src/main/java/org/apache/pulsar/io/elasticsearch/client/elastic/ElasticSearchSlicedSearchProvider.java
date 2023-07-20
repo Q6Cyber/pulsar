@@ -55,13 +55,11 @@ import java.util.stream.Collectors;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.pulsar.io.elasticsearch.SlicedSearchTask;
 import org.apache.pulsar.io.elasticsearch.client.SlicedSearchProvider;
-public class ElasticSearchSlicedSearchProvider extends
-        SlicedSearchProvider<ResponseBody<JsonData>, Hit<JsonData>, ElasticsearchClient> {
-
+public class ElasticSearchSlicedSearchProvider extends SlicedSearchProvider<ResponseBody<JsonData>, Hit<JsonData>> {
     private final ElasticsearchAsyncClient asyncClient;
-
+    private final ElasticsearchClient client;
     public ElasticSearchSlicedSearchProvider(ElasticsearchClient client, ElasticsearchAsyncClient asyncClient) {
-        super(client);
+        this.client = client;
         this.asyncClient = asyncClient;
     }
 

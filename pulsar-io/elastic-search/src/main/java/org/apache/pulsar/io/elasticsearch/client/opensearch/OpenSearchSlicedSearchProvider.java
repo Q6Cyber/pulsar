@@ -56,11 +56,15 @@ import org.opensearch.search.slice.SliceBuilder;
 import org.opensearch.search.sort.SortBuilder;
 
 @Slf4j
-public class OpenSearchSlicedSearchProvider extends SlicedSearchProvider<SearchResponse, SearchHit,
-        RestHighLevelClient> {
+public class OpenSearchSlicedSearchProvider extends SlicedSearchProvider<SearchResponse, SearchHit> {
 
+    private RestHighLevelClient client;
     public OpenSearchSlicedSearchProvider(RestHighLevelClient elasticsearchClient) {
-        super(elasticsearchClient);
+        this.client = elasticsearchClient;
+    }
+
+    private RestHighLevelClient client() {
+        return client;
     }
 
     @Override

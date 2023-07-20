@@ -18,14 +18,10 @@
  */
 package org.apache.pulsar.io.elasticsearch;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.SerializationFeature;
-import com.fasterxml.jackson.databind.json.JsonMapper;
-import com.fasterxml.jackson.databind.node.JsonNodeFactory;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import java.nio.ByteBuffer;
 import java.util.Map;
-import java.util.TreeMap;
+import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.pulsar.io.core.BatchPushSource;
@@ -41,12 +37,11 @@ import org.apache.pulsar.io.core.annotations.IOType;
     configClass = ElasticSearchConfig.class
 )
 @Slf4j
-public class ElasticSearchBatchSource extends BatchPushSource<byte[]> {
+public class ElasticSearchBatchSource extends BatchPushSource<ByteBuffer> {
 
   private ElasticSearchBatchSourceConfig elasticSearchConfig;
   private ElasticSearchClient elasticsearchClient;
   private final ObjectMapper objectMapper = new ObjectMapper();
-  private ObjectMapper sortedObjectMapper;
 
   @Override
   public int getQueueLength() {
@@ -59,20 +54,7 @@ public class ElasticSearchBatchSource extends BatchPushSource<byte[]> {
       throws Exception {
     elasticSearchConfig = ElasticSearchBatchSourceConfig.load(config, context);
     elasticSearchConfig.validate();
-    elasticsearchClient = null; //new ElasticSearchClient(elasticSearchConfig);
-    if (elasticSearchConfig.isCanonicalKeyFields()) {
-      sortedObjectMapper = JsonMapper
-          .builder()
-          .configure(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS, true)
-          .nodeFactory(new JsonNodeFactory() {
-            @Override
-            public ObjectNode objectNode() {
-              return new ObjectNode(this, new TreeMap<String, JsonNode>());
-            }
-
-          })
-          .build();
-    }
+    elasticsearchClient = new ElasticSearchClient(elasticSearchConfig);
   }
 
   @Override
@@ -85,11 +67,53 @@ public class ElasticSearchBatchSource extends BatchPushSource<byte[]> {
 
   @Override
   public void discover(Consumer<byte[]> taskEater) throws Exception {
+    int numSlices = elasticSearchConfig.getNumSlices();
+    for (int i = 0; i < numSlices; i++) {
+      SlicedSearchTask task =
+              switch (elasticSearchConfig.getPagingType()) {
+                case SCROLL -> buildScrollTask(i);
+                case PIT -> builtPitTask(i);
+              };
+      taskEater.accept(objectMapper.writeValueAsBytes(task));
+    }
+  }
 
+  public SlicedSearchTask buildScrollTask(int sliceId){
+    return SlicedSearchTask.buildFirstScrollTask(
+            elasticSearchConfig.getIndexName(),
+            elasticSearchConfig.getQuery(),
+            elasticSearchConfig.getSort(),
+            elasticSearchConfig.getPageSize(),
+            elasticSearchConfig.getKeepAliveMin(),
+            sliceId,
+            elasticSearchConfig.getNumSlices());
+  }
+
+  public SlicedSearchTask builtPitTask(int sliceId){
+    return SlicedSearchTask.buildFirstPitTask(
+            elasticSearchConfig.getIndexName(),
+            elasticSearchConfig.getQuery(),
+            elasticSearchConfig.getSort(),
+            elasticSearchConfig.getPageSize(),
+            elasticSearchConfig.getKeepAliveMin(),
+            sliceId,
+            elasticSearchConfig.getNumSlices());
   }
 
   @Override
   public void prepare(byte[] task) throws Exception {
-
+    SlicedSearchTask slicedSearchTask = objectMapper.readValue(task, SlicedSearchTask.class);
+    log.debug("Executing task {}", slicedSearchTask);
+    Consumer<ElasticSearchRecord> recordConsumer = this::consume;
+    CompletableFuture<Void> taskFut = elasticsearchClient.getSlicedSearchProvider()
+            .slicedSearch(slicedSearchTask, recordConsumer);
+    taskFut.whenComplete((aVoid, throwable) -> {
+      this.consume(null);
+      if (throwable != null){
+        log.error("Error while executing task {}", slicedSearchTask, throwable);
+      } else {
+        log.debug("Task {} completed", slicedSearchTask);
+      }
+    });
   }
 }

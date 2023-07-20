@@ -28,7 +28,6 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.function.Consumer;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.pulsar.functions.api.Record;
 import org.apache.pulsar.io.elasticsearch.ElasticSearchRecord;
 import org.apache.pulsar.io.elasticsearch.SlicedSearchTask;
 
@@ -36,19 +35,16 @@ import org.apache.pulsar.io.elasticsearch.SlicedSearchTask;
  *
  * @param <R> Search Response type
  * @param <X> Search Hit type
- * @param <W> Class of the client
  */
 @Slf4j
-public abstract class SlicedSearchProvider<R, X, W> {
+public abstract class SlicedSearchProvider<R, X> {
 
-    protected W client;
+    public SlicedSearchProvider() {
+    }
 
     protected final ObjectMapper objectMapper = new ObjectMapper()
             .configure(SerializationFeature.INDENT_OUTPUT, false)
             .setSerializationInclusion(JsonInclude.Include.ALWAYS);
-    public SlicedSearchProvider(W client){
-        this.client = client;
-    }
 
     public abstract void openPit(SlicedSearchTask task) throws IOException;
     public abstract boolean closePit(SlicedSearchTask task) throws IOException;
@@ -72,7 +68,7 @@ public abstract class SlicedSearchProvider<R, X, W> {
         return record;
     }
 
-    public CompletableFuture<Void> slicedScrollSearch(SlicedSearchTask task, Consumer<Record> recordConsumer)
+    public CompletableFuture<Void> slicedScrollSearch(SlicedSearchTask task, Consumer<ElasticSearchRecord> recordConsumer)
             throws IOException {
         try {
             CompletableFuture<? extends R> searchFut = startScrollSearch(task)
@@ -87,7 +83,7 @@ public abstract class SlicedSearchProvider<R, X, W> {
     }
 
     protected CompletableFuture<? extends R> handleScrollResponse(SlicedSearchTask task,
-                                                                  Consumer<Record> recordConsumer,
+                                                                  Consumer<ElasticSearchRecord> recordConsumer,
                                                                   R previousSearchResponse) {
         if (hasNoResults(previousSearchResponse)) {
             return CompletableFuture.completedFuture(null);
@@ -102,7 +98,7 @@ public abstract class SlicedSearchProvider<R, X, W> {
             throw new CompletionException(e);
         }
     }
-    public CompletableFuture<? extends R> handlePitResponse(SlicedSearchTask task, Consumer<Record> recordConsumer,
+    public CompletableFuture<? extends R> handlePitResponse(SlicedSearchTask task, Consumer<ElasticSearchRecord> recordConsumer,
                                                             R previousSearchResponse) {
         if (hasNoResults(previousSearchResponse)) {
             return CompletableFuture.completedFuture(null);
@@ -118,7 +114,7 @@ public abstract class SlicedSearchProvider<R, X, W> {
         }
     }
 
-    public CompletableFuture<Void> slicedPitSearch(SlicedSearchTask task, Consumer<Record> recordConsumer)
+    public CompletableFuture<Void> slicedPitSearch(SlicedSearchTask task, Consumer<ElasticSearchRecord> recordConsumer)
             throws IOException {
         openPit(task);
         try {
@@ -132,7 +128,7 @@ public abstract class SlicedSearchProvider<R, X, W> {
             }
         }
     }
-    public CompletableFuture<Void> slicedSearch(SlicedSearchTask task, Consumer<Record> recordConsumer)
+    public CompletableFuture<Void> slicedSearch(SlicedSearchTask task, Consumer<ElasticSearchRecord> recordConsumer)
             throws IOException {
         return switch (task.getPagingType()) {
             case PIT -> slicedPitSearch(task, recordConsumer);

@@ -36,6 +36,7 @@ import org.apache.pulsar.functions.api.Record;
 import org.apache.pulsar.io.elasticsearch.client.BulkProcessor;
 import org.apache.pulsar.io.elasticsearch.client.RestClient;
 import org.apache.pulsar.io.elasticsearch.client.RestClientFactory;
+import org.apache.pulsar.io.elasticsearch.client.SlicedSearchProvider;
 
 @Slf4j
 public class ElasticSearchClient implements AutoCloseable {
@@ -254,6 +255,10 @@ public class ElasticSearchClient implements AutoCloseable {
             client.close();
             client = null;
         }
+    }
+
+    public SlicedSearchProvider getSlicedSearchProvider() {
+        return client.getSlicedSearchProvider();
     }
 
     @VisibleForTesting

@@ -88,6 +88,13 @@ public class ElasticSearchBatchSourceConfig extends ElasticSearchConfig implemen
     )
     private int pageSize = 1000;
 
+    @FieldDoc(
+            required = false,
+            defaultValue = "2",
+            help = "The number of minutes to keep a Scroll or PIT alive. "
+                    + "This is only the time required to consume one page of results, not all results."
+    )
+    private int keepAliveMin = 2;
     public enum PagingType {
         PIT,
         SCROLL

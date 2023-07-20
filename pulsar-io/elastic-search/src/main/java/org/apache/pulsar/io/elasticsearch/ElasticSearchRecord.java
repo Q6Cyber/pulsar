@@ -18,25 +18,26 @@
  */
 package org.apache.pulsar.io.elasticsearch;
 
+import java.nio.ByteBuffer;
 import java.util.Map;
 import java.util.Optional;
 import org.apache.pulsar.client.api.Schema;
 import org.apache.pulsar.functions.api.Record;
 
-public class ElasticSearchRecord<T> implements Record<byte[]> {
-    private final byte[] sourceBytes;
+public class ElasticSearchRecord implements Record<ByteBuffer> {
+    private final ByteBuffer byteBuffer;
     private final String key;
     private final Map<String, String> properties;
 
     public ElasticSearchRecord(byte[] sourceBytes, String key, Map<String, String> properties) {
-        this.sourceBytes = sourceBytes;
+        this.byteBuffer = ByteBuffer.wrap(sourceBytes);
         this.key = key;
         this.properties = properties;
     }
 
     @Override
-    public byte[] getValue() {
-        return sourceBytes;
+    public ByteBuffer getValue() {
+        return byteBuffer;
     }
 
     @Override
@@ -45,8 +46,8 @@ public class ElasticSearchRecord<T> implements Record<byte[]> {
     }
 
     @Override
-    public Schema<byte[]> getSchema() {
-        return Schema.BYTES;
+    public Schema<ByteBuffer> getSchema() {
+        return Schema.BYTEBUFFER;
     }
 
     @Override
