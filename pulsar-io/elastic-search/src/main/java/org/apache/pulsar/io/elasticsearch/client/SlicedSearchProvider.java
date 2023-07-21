@@ -26,6 +26,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.function.Consumer;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.pulsar.io.elasticsearch.ElasticSearchRecord;
@@ -60,6 +62,7 @@ public abstract class SlicedSearchProvider<R, X> {
     public abstract byte[] getHitBytes(X hit);
     public abstract String buildKey(X hit);
 
+    protected ExecutorService executorService = Executors.newWorkStealingPool();
     public ElasticSearchRecord buildRecordFromSearchHit(X hit) {
         Map<String, String> properties = buildRecordProperties(hit);
         byte[] source = getHitBytes(hit);
@@ -68,18 +71,32 @@ public abstract class SlicedSearchProvider<R, X> {
         return record;
     }
 
-    public CompletableFuture<Void> slicedScrollSearch(SlicedSearchTask task, Consumer<ElasticSearchRecord> recordConsumer)
+    public CompletableFuture<Void> slicedScrollSearch(SlicedSearchTask task,
+                                                      Consumer<ElasticSearchRecord> recordConsumer)
             throws IOException {
-        try {
-            CompletableFuture<? extends R> searchFut = startScrollSearch(task)
-                    .thenCompose(response -> handleScrollResponse(task, recordConsumer, response));
-            return searchFut.thenApply(r -> null);
-        } finally {
-            boolean closeScrollSuccess = closeScroll(task);
-            if (!closeScrollSuccess) {
-                log.warn("Unable to close Scroll: {}", task.getScrollId());
+        CompletableFuture<? extends R> searchFut = startScrollSearch(task)
+                .thenComposeAsync(response -> handleScrollResponse(task, recordConsumer, response), executorService);
+        return searchFut.handleAsync((r, e) -> {
+            try {
+                boolean closeScrollSuccess = closeScroll(task);
+                if (!closeScrollSuccess) {
+                    log.warn("Unable to close Scroll: {}", task.getScrollId());
+                }
+            } catch (IOException ex) {
+                log.error("Unable to close Scroll: {}", task.getScrollId());
+                if (e != null) {
+                    e.addSuppressed(ex);
+                } else {
+                    throw new CompletionException(ex);
+                }
             }
-        }
+            if (e != null) {
+                log.error("Error while searching with scroll", e);
+                throw new CompletionException(e);
+            }
+            return null;
+        }, executorService);
+
     }
 
     protected CompletableFuture<? extends R> handleScrollResponse(SlicedSearchTask task,
@@ -93,7 +110,8 @@ public abstract class SlicedSearchProvider<R, X> {
                 .forEach(recordConsumer);
         updateScrollTaskFromSearchResponse(task, previousSearchResponse);
         try {
-            return scrollResults(task);
+            return scrollResults(task).thenComposeAsync(response ->
+                            handleScrollResponse(task, recordConsumer, response), executorService);
         } catch (IOException e) {
             throw new CompletionException(e);
         }
@@ -117,16 +135,29 @@ public abstract class SlicedSearchProvider<R, X> {
     public CompletableFuture<Void> slicedPitSearch(SlicedSearchTask task, Consumer<ElasticSearchRecord> recordConsumer)
             throws IOException {
         openPit(task);
-        try {
-            CompletableFuture<? extends R> searchFut = searchWithPit(task)
-                    .thenCompose(response -> handlePitResponse(task, recordConsumer, response));
-            return searchFut.thenApply(response -> null);
-        } finally {
-            boolean pitCloseSuccess = closePit(task);
-            if (!pitCloseSuccess) {
-                log.warn("Unable to close PIT: {}", task.getPitId());
+        CompletableFuture<? extends R> searchFut = searchWithPit(task)
+                .thenComposeAsync(response -> handlePitResponse(task, recordConsumer, response), executorService);
+        return searchFut.handleAsync((r, e) -> {
+            try {
+                boolean pitCloseSuccess = closePit(task);
+                if (!pitCloseSuccess) {
+                    log.warn("Unable to close PIT: {}", task.getPitId());
+                }
+            } catch (IOException ex) {
+                log.error("Unable to close PIT: {}", task.getPitId());
+                if (e != null){
+                    e.addSuppressed(ex);
+                } else {
+                    throw new CompletionException(ex);
+                }
             }
-        }
+            if (e != null) {
+                log.error("Error while searching with PIT", e);
+                throw new CompletionException(e);
+            }
+            return null;
+        }, executorService);
+
     }
     public CompletableFuture<Void> slicedSearch(SlicedSearchTask task, Consumer<ElasticSearchRecord> recordConsumer)
             throws IOException {

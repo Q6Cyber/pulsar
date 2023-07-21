@@ -18,24 +18,11 @@
  */
 package org.apache.pulsar.io.elasticsearch.opensearch;
 
-import static org.opensearch.search.sort.SortOrder.DESC;
-import static org.testng.Assert.assertEquals;
-import static org.testng.Assert.assertNotNull;
-import java.io.IOException;
-import java.util.List;
-import org.apache.pulsar.io.elasticsearch.client.opensearch.OpenSearchUtil;
-import org.opensearch.search.sort.SortBuilder;
-import org.testng.annotations.Test;
+import org.apache.pulsar.io.elasticsearch.ElasticSearchBatchSourceTests;
 
-public class OpensearchXContentTests {
+public class OpenSearchBatchSourceTests extends ElasticSearchBatchSourceTests {
 
-  @Test
-  public void testParseSortJson() throws IOException {
-    String sortJson = "[{\"grades\" : {\"order\" : \"desc\", \"mode\" : \"avg\"}}]";
-    List<SortBuilder<?>> sortBuilders = OpenSearchUtil.parseSortJson(sortJson);
-    assertEquals(1, sortBuilders.size());
-    SortBuilder<?> sortBuilder = sortBuilders.get(0);
-    assertNotNull(sortBuilder);
-    assertEquals(DESC, sortBuilder.order());
-  }
+    public OpenSearchBatchSourceTests() {
+        super(OPENSEARCH);
+    }
 }

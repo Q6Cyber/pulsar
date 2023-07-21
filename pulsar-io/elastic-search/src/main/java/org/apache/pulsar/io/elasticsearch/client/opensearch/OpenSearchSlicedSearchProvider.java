@@ -18,6 +18,7 @@
  */
 package org.apache.pulsar.io.elasticsearch.client.opensearch;
 
+import co.elastic.clients.elasticsearch.core.ScrollResponse;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import java.io.IOException;
@@ -27,6 +28,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
@@ -35,11 +37,13 @@ import org.apache.http.util.EntityUtils;
 import org.apache.pulsar.io.elasticsearch.SlicedSearchTask;
 import org.apache.pulsar.io.elasticsearch.client.SlicedSearchProvider;
 import org.opensearch.action.ActionListener;
+import org.opensearch.action.ActionRequestValidationException;
 import org.opensearch.action.search.ClearScrollRequest;
 import org.opensearch.action.search.ClearScrollResponse;
 import org.opensearch.action.search.SearchRequest;
 import org.opensearch.action.search.SearchResponse;
 import org.opensearch.action.search.SearchScrollRequest;
+import org.opensearch.client.Cancellable;
 import org.opensearch.client.Request;
 import org.opensearch.client.RequestOptions;
 import org.opensearch.client.Response;
@@ -73,8 +77,11 @@ public class OpenSearchSlicedSearchProvider extends SlicedSearchProvider<SearchR
         properties.put("id", hit.getId());
         properties.put("docId", String.valueOf(hit.docId()));
         properties.put("index", hit.getIndex());
-        properties.put("shard", String.valueOf(hit.getShard().getShardId()));
-        properties.put("node", String.valueOf(hit.getShard().getNodeId()));
+        Optional.ofNullable(hit.getShard())
+                .ifPresent(shard -> {
+                    properties.put("shard", String.valueOf(shard.getShardId()));
+                    properties.put("node", String.valueOf(shard.getNodeId()));
+                });
         properties.put("type", hit.getType());
         properties.put("score", String.valueOf(hit.getScore()));
         properties.put("version", String.valueOf(hit.getVersion()));
@@ -107,12 +114,12 @@ public class OpenSearchSlicedSearchProvider extends SlicedSearchProvider<SearchR
 
     @Override
     public String getPitIdFromResponse(SearchResponse response) {
-        return response.getScrollId();
+        return response.pointInTimeId();
     }
 
     @Override
     public String getScrollIdFromResponse(SearchResponse response) {
-        return response.pointInTimeId();
+        return response.getScrollId();
     }
 
     @Override
@@ -189,12 +196,15 @@ public class OpenSearchSlicedSearchProvider extends SlicedSearchProvider<SearchR
         ActionListener<SearchResponse> actionListener = buildActionListener(responseFuture);
         SearchScrollRequest scrollRequest = new SearchScrollRequest(task.getScrollId());
         scrollRequest.scroll(scroll);
-        client.searchScrollAsync(scrollRequest, RequestOptions.DEFAULT, actionListener);
+        Cancellable cancellable = client.searchScrollAsync(scrollRequest, RequestOptions.DEFAULT, actionListener);
         return responseFuture;
     }
 
     @Override
     public boolean closeScroll(SlicedSearchTask task) throws IOException {
+        if (StringUtils.isBlank(task.getScrollId())) {
+            return true;
+        }
         ClearScrollRequest request = new ClearScrollRequest();
         request.addScrollId(task.getScrollId());
         ClearScrollResponse response = client.clearScroll(request, RequestOptions.DEFAULT);

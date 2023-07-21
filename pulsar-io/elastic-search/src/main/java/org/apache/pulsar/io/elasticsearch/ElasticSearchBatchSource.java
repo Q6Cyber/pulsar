@@ -18,10 +18,13 @@
  */
 package org.apache.pulsar.io.elasticsearch;
 
+import co.elastic.clients.util.VisibleForTesting;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.ByteBuffer;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.function.Consumer;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.pulsar.io.core.BatchPushSource;
@@ -43,6 +46,12 @@ public class ElasticSearchBatchSource extends BatchPushSource<ByteBuffer> {
   private ElasticSearchClient elasticsearchClient;
   private final ObjectMapper objectMapper = new ObjectMapper();
 
+  private CompletableFuture<Void> currentTaskFut = null;
+
+  @VisibleForTesting
+  public ElasticSearchClient getClient() {
+    return elasticsearchClient;
+  }
   @Override
   public int getQueueLength() {
     return 20_000; //set for 2 x max batch size.
@@ -74,7 +83,7 @@ public class ElasticSearchBatchSource extends BatchPushSource<ByteBuffer> {
                 case SCROLL -> buildScrollTask(i);
                 case PIT -> builtPitTask(i);
               };
-      taskEater.accept(objectMapper.writeValueAsBytes(task));
+      taskEater.accept(serializeTask(task));
     }
   }
 
@@ -102,18 +111,33 @@ public class ElasticSearchBatchSource extends BatchPushSource<ByteBuffer> {
 
   @Override
   public void prepare(byte[] task) throws Exception {
-    SlicedSearchTask slicedSearchTask = objectMapper.readValue(task, SlicedSearchTask.class);
+    SlicedSearchTask slicedSearchTask = deserializeTask(task);
     log.debug("Executing task {}", slicedSearchTask);
     Consumer<ElasticSearchRecord> recordConsumer = this::consume;
     CompletableFuture<Void> taskFut = elasticsearchClient.getSlicedSearchProvider()
             .slicedSearch(slicedSearchTask, recordConsumer);
-    taskFut.whenComplete((aVoid, throwable) -> {
+    currentTaskFut = taskFut.handle((aVoid, throwable) -> {
       this.consume(null);
       if (throwable != null){
         log.error("Error while executing task {}", slicedSearchTask, throwable);
+        throw new CompletionException(throwable);
       } else {
         log.debug("Task {} completed", slicedSearchTask);
       }
+      return null;
     });
+  }
+
+  @VisibleForTesting
+  CompletableFuture<Void> getCurrentTaskFuture() {
+    return currentTaskFut;
+  }
+
+  public SlicedSearchTask deserializeTask(byte[] task) throws Exception {
+    return objectMapper.readValue(task, SlicedSearchTask.class);
+  }
+
+  public byte[] serializeTask(SlicedSearchTask task) throws JsonProcessingException {
+    return objectMapper.writeValueAsBytes(task);
   }
 }

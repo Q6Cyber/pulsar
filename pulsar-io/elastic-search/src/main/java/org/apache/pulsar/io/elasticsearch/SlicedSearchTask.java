@@ -19,9 +19,11 @@
 package org.apache.pulsar.io.elasticsearch;
 
 import java.io.Serializable;
+import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
+import lombok.NoArgsConstructor;
 import lombok.ToString;
 import lombok.experimental.Accessors;
 
@@ -31,6 +33,8 @@ import lombok.experimental.Accessors;
 @EqualsAndHashCode
 @ToString
 @Builder
+@NoArgsConstructor
+@AllArgsConstructor
 public class SlicedSearchTask implements Serializable {
   private String index;
   private String query;

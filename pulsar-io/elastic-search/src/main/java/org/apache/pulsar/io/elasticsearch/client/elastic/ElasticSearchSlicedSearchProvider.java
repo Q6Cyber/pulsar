@@ -47,6 +47,7 @@ import java.io.StringReader;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -55,6 +56,8 @@ import java.util.stream.Collectors;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.pulsar.io.elasticsearch.SlicedSearchTask;
 import org.apache.pulsar.io.elasticsearch.client.SlicedSearchProvider;
+import org.opensearch.search.SearchHit;
+
 public class ElasticSearchSlicedSearchProvider extends SlicedSearchProvider<ResponseBody<JsonData>, Hit<JsonData>> {
     private final ElasticsearchAsyncClient asyncClient;
     private final ElasticsearchClient client;
@@ -88,7 +91,23 @@ public class ElasticSearchSlicedSearchProvider extends SlicedSearchProvider<Resp
 
     @Override
     public Map<String, String> buildRecordProperties(Hit<JsonData> hit) {
-        return null;
+        Map<String, String> properties = new HashMap<>();
+        properties.put("id", hit.id());
+        properties.put("index", hit.index());
+        Optional.ofNullable(hit.shard())
+                .ifPresent(shard -> {
+                    properties.put("shard", shard);
+                });
+        properties.put("node", hit.node());
+        properties.put("score", String.valueOf(hit.score()));
+        properties.put("version", String.valueOf(hit.version()));
+        properties.put("seqNo", String.valueOf(hit.seqNo()));
+        properties.put("primaryTerm", String.valueOf(hit.primaryTerm()));
+        properties.put("sortValues", hit.sort().toString());
+        if (hit.matchedQueries() != null && !hit.matchedQueries().isEmpty()) {
+            properties.put("matchedQueries", hit.matchedQueries().toString());
+        }
+        return properties;
     }
 
     @Override
@@ -161,6 +180,9 @@ public class ElasticSearchSlicedSearchProvider extends SlicedSearchProvider<Resp
 
     @Override
     public boolean closeScroll(SlicedSearchTask task) throws IOException {
+        if (StringUtils.isBlank(task.getScrollId())) {
+            return true;
+        }
         ClearScrollRequest clearScrollRequest = new ClearScrollRequest.Builder()
                 .scrollId(task.getScrollId())
                 .build();

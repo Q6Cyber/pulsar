@@ -59,7 +59,7 @@ public class ElasticSearchBatchSourceConfig extends ElasticSearchConfig implemen
     private String keyFields = "";
 
     @FieldDoc(
-        required = true,
+        required = false,
         defaultValue = "1",
         help = "The number of slices to split the query into. Each slice will be loaded in parallel."
     )
