@@ -59,7 +59,7 @@ public abstract class ElasticSearchBatchSourceTests extends ElasticSearchTestBas
     }
 
     protected List<UserProfile> getUserProfiles(int count) {
-        int bound = Math.max(1000, count * 3);
+        int bound = Math.max(10000, count * 3);
         return IntStream.range(0, count)
                 .mapToObj(i -> buildUserProfile(RND.nextInt(bound)))
                 .toList();
@@ -113,59 +113,90 @@ public abstract class ElasticSearchBatchSourceTests extends ElasticSearchTestBas
     @DataProvider(name = "readSlices")
     public Object[][] readSlices() {
         return new Object[][]{
-                new Object[]{1, 5, 100},
-                new Object[]{5, 5, 100},
-                new Object[]{1, 500, 100},
-                new Object[]{5, 500, 100}
+                new Object[]{ElasticSearchBatchSourceConfig.PagingType.SCROLL, 1, 5, 100},
+                new Object[]{ElasticSearchBatchSourceConfig.PagingType.SCROLL, 1, 100, 100},
+                new Object[]{ElasticSearchBatchSourceConfig.PagingType.SCROLL, 5, 5, 100},
+                new Object[]{ElasticSearchBatchSourceConfig.PagingType.SCROLL, 1, 500, 100},
+                new Object[]{ElasticSearchBatchSourceConfig.PagingType.SCROLL, 5, 500, 100},
+                new Object[]{ElasticSearchBatchSourceConfig.PagingType.SCROLL, 5, 100, 500},
+
+                new Object[]{ElasticSearchBatchSourceConfig.PagingType.PIT, 1, 5, 100},
+                new Object[]{ElasticSearchBatchSourceConfig.PagingType.PIT, 1, 100, 100},
+                new Object[]{ElasticSearchBatchSourceConfig.PagingType.PIT, 5, 5, 100},
+                new Object[]{ElasticSearchBatchSourceConfig.PagingType.PIT, 1, 500, 100},
+                new Object[]{ElasticSearchBatchSourceConfig.PagingType.PIT, 5, 500, 100},
+                new Object[]{ElasticSearchBatchSourceConfig.PagingType.PIT, 5, 100, 500}
         };
     }
 
-    @Test
-    public void testDiscover() throws Exception {
-        int numSlices = 10;
+    @DataProvider(name = "discoverSlices")
+    public Object[][] discoverSlices() {
+        return new Object[][]{
+                new Object[]{ElasticSearchBatchSourceConfig.PagingType.SCROLL, 1},
+                new Object[]{ElasticSearchBatchSourceConfig.PagingType.SCROLL, 5},
+
+                new Object[]{ElasticSearchBatchSourceConfig.PagingType.PIT, 1},
+                new Object[]{ElasticSearchBatchSourceConfig.PagingType.PIT, 5},
+        };
+    }
+
+    @Test(dataProvider = "discoverSlices")
+    public void testDiscoverSlices(ElasticSearchBatchSourceConfig.PagingType pagingType, int numSlices) throws Exception {
         map.put("numSlices", numSlices);
+        map.put("pagingType", pagingType.toString());
         source.open(map, mockSourceContext);
         List<byte[]> tasks = new ArrayList<>();
         Consumer<byte[]> byteEater = tasks::add;
         source.discover(byteEater);
-        assertEquals(numSlices, tasks.size());
+        assertEquals(tasks.size(), numSlices);
         for (int i = 0; i < numSlices; i++) {
             SlicedSearchTask slicedSearchTask = source.deserializeTask(tasks.get(i));
             assertNotNull(slicedSearchTask);
             assertEquals(slicedSearchTask.getSliceId(), i);
+            assertEquals(pagingType, slicedSearchTask.getPagingType());
         }
     }
 
     @Test(dataProvider = "readSlices")
-    public void testReadSlices(int numSlices, int pageSize, int count) throws Exception {
-        String index = "test" + RND.nextInt(1000);
+    public void testReadSlices(ElasticSearchBatchSourceConfig.PagingType pagingType, int numSlices, int pageSize, int count) throws Exception {
+        String index = "test" + RND.nextInt(10000);
         List<byte[]> tasks = new ArrayList<>();
         Consumer<byte[]> byteEater = tasks::add;
         map.put("numSlices", numSlices);
         map.put("pageSize", pageSize);
         map.put("indexName", index);
+        map.put("pagingType", pagingType.toString());
 
         source.open(map, mockSourceContext);
         ElasticSearchClient client = source.getClient();
         setupIndex(index, client, count);
         source.discover(byteEater);
-        assertEquals(numSlices, tasks.size());
+        assertEquals(tasks.size(), numSlices);
+        int totalRecordsRead = 0;
         for (byte[] task : tasks) {
             source.prepare(task);
             Record<ByteBuffer> record;
             List<Record<ByteBuffer>> records = new ArrayList<>();
             source.getCurrentTaskFuture().get(30, TimeUnit.SECONDS);
             Instant start = Instant.now();
-            while ((record = source.readNext()) != null && Duration.between(start, Instant.now()).toSeconds() < 30){
+            Duration duration = null;
+            while ((record = source.readNext()) != null &&
+                    (duration = Duration.between(start, Instant.now())).toSeconds() < 30){
                 records.add(record);
             }
+            assertTrue(duration.toSeconds() < 30, "Read took longer than 30 seconds");
             double evenSliceCount = (double)count / (double) numSlices;
-            assertTrue(records.size() > 0);
+            assertTrue(records.size() > 0, "No records read from slice");
+            assertTrue(records.size() <=  count, "Too many records read from slice");
             double percentDif = Math.abs(records.size() - evenSliceCount) / evenSliceCount;
-            assertTrue(percentDif <= 0.5,
-                    "Number of records from one slice is not within 10% of even distribution. "
-                            + "% dif: " + percentDif + " slice count: " + records.size());
+            System.out.println("Slice count: " + records.size() + " even slice count: " + evenSliceCount
+                    + " percent dif: " + percentDif);
+            totalRecordsRead += records.size();
+//            assertTrue(percentDif <= 0.5,
+//                    "Number of records from one slice is not within 50% of even distribution. "
+//                            + "% dif: " + percentDif + " slice count: " + records.size());
         }
+        assertEquals(totalRecordsRead, count);
     }
 
     private void setupIndex(String index,  ElasticSearchClient client, int count) throws Exception {

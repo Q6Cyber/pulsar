@@ -23,6 +23,7 @@ import co.elastic.clients.elasticsearch.ElasticsearchClient;
 import co.elastic.clients.elasticsearch._types.FieldValue;
 import co.elastic.clients.elasticsearch._types.SlicedScroll;
 import co.elastic.clients.elasticsearch._types.SortOptions;
+import co.elastic.clients.elasticsearch._types.SortOrder;
 import co.elastic.clients.elasticsearch._types.Time;
 import co.elastic.clients.elasticsearch._types.query_dsl.Query;
 import co.elastic.clients.elasticsearch.core.ClearScrollRequest;
@@ -54,9 +55,9 @@ import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.pulsar.io.elasticsearch.ElasticSearchBatchSourceConfig;
 import org.apache.pulsar.io.elasticsearch.SlicedSearchTask;
 import org.apache.pulsar.io.elasticsearch.client.SlicedSearchProvider;
-import org.opensearch.search.SearchHit;
 
 public class ElasticSearchSlicedSearchProvider extends SlicedSearchProvider<ResponseBody<JsonData>, Hit<JsonData>> {
     private final ElasticsearchAsyncClient asyncClient;
@@ -68,12 +69,12 @@ public class ElasticSearchSlicedSearchProvider extends SlicedSearchProvider<Resp
 
     @Override
     public String getPitIdFromResponse(ResponseBody<JsonData> response) {
-        return response.pitId();
+        return Optional.ofNullable(response.pitId()).orElse("");
     }
 
     @Override
     public String getScrollIdFromResponse(ResponseBody<JsonData> response) {
-        return response.scrollId();
+        return Optional.ofNullable(response.scrollId()).orElse("");
     }
 
     @Override
@@ -166,11 +167,15 @@ public class ElasticSearchSlicedSearchProvider extends SlicedSearchProvider<Resp
     @Override
     public CompletableFuture<SearchResponse<JsonData>> startScrollSearch(SlicedSearchTask task) throws IOException {
         SearchRequest.Builder request = buildSearchRequest(task);
+        request.index(task.getIndex());
         request.scroll(new Time.Builder().time(task.getKeepAliveMin() + "m").build());
         return asyncClient.search(request.build(), JsonData.class);
     }
     @Override
     public CompletableFuture<ScrollResponse<JsonData>> scrollResults(SlicedSearchTask task) throws IOException {
+        if (StringUtils.isBlank(task.getScrollId())) {
+            CompletableFuture.failedFuture(new IllegalArgumentException("scrollId is null"));
+        }
         ScrollRequest scrollRequest = new ScrollRequest.Builder()
                 .scrollId(task.getScrollId())
                 .scroll(new Time.Builder().time(task.getKeepAliveMin() + "m").build())
@@ -222,8 +227,19 @@ public class ElasticSearchSlicedSearchProvider extends SlicedSearchProvider<Resp
                 sortOptions.add(sortOption);
             }
             request.sort(sortOptions);
+        } else {
+            getDefaultSort(task.getPagingType()).ifPresent(request::sort);
         }
         return request;
+    }
+
+    protected Optional<SortOptions> getDefaultSort(ElasticSearchBatchSourceConfig.PagingType pagingType){
+        if (pagingType == ElasticSearchBatchSourceConfig.PagingType.PIT) {
+            return Optional.of(SortOptions.of( sb -> sb.field( fo -> fo.field("_shard_doc").order(SortOrder.Desc) ) ));
+        } else if (pagingType == ElasticSearchBatchSourceConfig.PagingType.SCROLL) {
+            return Optional.of(SortOptions.of( sb -> sb.field( fo -> fo.field("_doc") ) ));
+        }
+        return Optional.empty();
     }
 
     private FieldValue getFieldValFromObj(Object value){

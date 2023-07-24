@@ -18,6 +18,7 @@
  */
 package org.apache.pulsar.io.elasticsearch.client.opensearch;
 
+import co.elastic.clients.elasticsearch._types.SortOptions;
 import co.elastic.clients.elasticsearch.core.ScrollResponse;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -34,6 +35,7 @@ import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.http.util.EntityUtils;
+import org.apache.pulsar.io.elasticsearch.ElasticSearchBatchSourceConfig;
 import org.apache.pulsar.io.elasticsearch.SlicedSearchTask;
 import org.apache.pulsar.io.elasticsearch.client.SlicedSearchProvider;
 import org.opensearch.action.ActionListener;
@@ -58,6 +60,8 @@ import org.opensearch.search.builder.PointInTimeBuilder;
 import org.opensearch.search.builder.SearchSourceBuilder;
 import org.opensearch.search.slice.SliceBuilder;
 import org.opensearch.search.sort.SortBuilder;
+import org.opensearch.search.sort.SortBuilders;
+import org.opensearch.search.sort.SortOrder;
 
 @Slf4j
 public class OpenSearchSlicedSearchProvider extends SlicedSearchProvider<SearchResponse, SearchHit> {
@@ -114,12 +118,12 @@ public class OpenSearchSlicedSearchProvider extends SlicedSearchProvider<SearchR
 
     @Override
     public String getPitIdFromResponse(SearchResponse response) {
-        return response.pointInTimeId();
+        return Optional.ofNullable(response.pointInTimeId()).orElse("");
     }
 
     @Override
     public String getScrollIdFromResponse(SearchResponse response) {
-        return response.getScrollId();
+        return Optional.ofNullable(response.getScrollId()).orElse("");
     }
 
     @Override
@@ -170,7 +174,7 @@ public class OpenSearchSlicedSearchProvider extends SlicedSearchProvider<SearchR
             searchSourceBuilder.searchAfter(task.getSearchAfter());
         }
 
-        SearchRequest searchRequest = new SearchRequest(task.getIndex());
+        SearchRequest searchRequest = new SearchRequest();
         searchRequest.source(searchSourceBuilder);
         CompletableFuture<SearchResponse> responseFuture = new CompletableFuture<>();
         client.searchAsync(searchRequest, RequestOptions.DEFAULT, buildActionListener(responseFuture));
@@ -191,6 +195,9 @@ public class OpenSearchSlicedSearchProvider extends SlicedSearchProvider<SearchR
 
     @Override
     public CompletableFuture<SearchResponse> scrollResults(SlicedSearchTask task) throws IOException {
+        if (StringUtils.isBlank(task.getScrollId())) {
+            CompletableFuture.failedFuture(new IllegalArgumentException("scrollId is null"));
+        }
         final Scroll scroll = new Scroll(TimeValue.timeValueMinutes(task.getKeepAliveMin()));
         final CompletableFuture<SearchResponse> responseFuture = new CompletableFuture<>();
         ActionListener<SearchResponse> actionListener = buildActionListener(responseFuture);
@@ -235,8 +242,19 @@ public class OpenSearchSlicedSearchProvider extends SlicedSearchProvider<SearchR
             if (sortBuilders != null && !sortBuilders.isEmpty()){
                 sortBuilders.forEach(searchSourceBuilder::sort);
             }
+        } else {
+            getDefaultSort(task.getPagingType()).ifPresent(searchSourceBuilder::sort);
         }
         return searchSourceBuilder;
+    }
+
+    protected Optional<SortBuilder<?>> getDefaultSort(ElasticSearchBatchSourceConfig.PagingType pagingType){
+        if (pagingType == ElasticSearchBatchSourceConfig.PagingType.PIT){
+            return Optional.of(SortBuilders.fieldSort("_shard_doc").order(SortOrder.DESC));
+        } else if (pagingType == ElasticSearchBatchSourceConfig.PagingType.SCROLL) {
+            return Optional.of(SortBuilders.fieldSort("_doc") );
+        }
+        return Optional.empty();
     }
 
     public <X> ActionListener<X> buildActionListener(CompletableFuture<X> responseFuture){

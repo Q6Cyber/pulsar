@@ -30,6 +30,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.function.Consumer;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.StringUtils;
+import org.apache.pulsar.io.elasticsearch.ElasticSearchBatchSourceConfig;
 import org.apache.pulsar.io.elasticsearch.ElasticSearchRecord;
 import org.apache.pulsar.io.elasticsearch.SlicedSearchTask;
 
@@ -108,7 +110,7 @@ public abstract class SlicedSearchProvider<R, X> {
         getHits(previousSearchResponse).stream()
                 .map(this::buildRecordFromSearchHit)
                 .forEach(recordConsumer);
-        updateScrollTaskFromSearchResponse(task, previousSearchResponse);
+        updateTaskFromSearchResponse(task, previousSearchResponse);
         try {
             return scrollResults(task).thenComposeAsync(response ->
                             handleScrollResponse(task, recordConsumer, response), executorService);
@@ -116,7 +118,9 @@ public abstract class SlicedSearchProvider<R, X> {
             throw new CompletionException(e);
         }
     }
-    public CompletableFuture<? extends R> handlePitResponse(SlicedSearchTask task, Consumer<ElasticSearchRecord> recordConsumer,
+
+    public CompletableFuture<? extends R> handlePitResponse(SlicedSearchTask task,
+                                                            Consumer<ElasticSearchRecord> recordConsumer,
                                                             R previousSearchResponse) {
         if (hasNoResults(previousSearchResponse)) {
             return CompletableFuture.completedFuture(null);
@@ -124,9 +128,10 @@ public abstract class SlicedSearchProvider<R, X> {
         getHits(previousSearchResponse).stream()
                 .map(this::buildRecordFromSearchHit)
                 .forEach(recordConsumer);
-        updatePitTaskFromSearchResponse(task, previousSearchResponse);
+        updateTaskFromSearchResponse(task, previousSearchResponse);
         try {
-            return searchWithPit(task);
+            return searchWithPit(task).thenComposeAsync(response ->
+                            handlePitResponse(task, recordConsumer, response), executorService);
         } catch (IOException e) {
             throw new CompletionException(e);
         }
@@ -175,13 +180,19 @@ public abstract class SlicedSearchProvider<R, X> {
         return listIsEmpty(hits);
     }
 
-    public void updateScrollTaskFromSearchResponse(SlicedSearchTask task, R response){
-        task.setScrollId(getScrollIdFromResponse(response));
-    }
-
-    public void updatePitTaskFromSearchResponse(SlicedSearchTask task, R response){
-        task.setSearchAfter(getSortValuesFromLastHit(response));
-        task.setPitId(getPitIdFromResponse(response));
+    public void updateTaskFromSearchResponse(SlicedSearchTask task, R response){
+        String pitId = getPitIdFromResponse(response);
+        if (StringUtils.isNotBlank(pitId)){
+            task.setPitId(pitId);
+        }
+        Object[] sortValues = getSortValuesFromLastHit(response);
+        if (sortValues != null && sortValues.length > 0) {
+            task.setSearchAfter(sortValues);
+        }
+        String scrollId = getScrollIdFromResponse(response);
+        if (StringUtils.isNotBlank(scrollId)) {
+            task.setScrollId(scrollId);
+        }
     }
 
     public boolean listIsEmpty(List<?> list) {
