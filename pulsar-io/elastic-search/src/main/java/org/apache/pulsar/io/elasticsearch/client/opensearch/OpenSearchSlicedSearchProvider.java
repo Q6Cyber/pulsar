@@ -18,9 +18,6 @@
  */
 package org.apache.pulsar.io.elasticsearch.client.opensearch;
 
-import co.elastic.clients.elasticsearch.core.CreateResponse;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.node.ArrayNode;
 import java.io.IOException;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -28,11 +25,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
-import org.apache.http.util.EntityUtils;
 import org.apache.pulsar.io.elasticsearch.ElasticSearchBatchSourceConfig;
 import org.apache.pulsar.io.elasticsearch.SlicedSearchTask;
 import org.apache.pulsar.io.elasticsearch.client.SlicedSearchProvider;
@@ -48,9 +43,7 @@ import org.opensearch.action.search.SearchRequest;
 import org.opensearch.action.search.SearchResponse;
 import org.opensearch.action.search.SearchScrollRequest;
 import org.opensearch.client.Cancellable;
-import org.opensearch.client.Request;
 import org.opensearch.client.RequestOptions;
-import org.opensearch.client.Response;
 import org.opensearch.client.RestHighLevelClient;
 import org.opensearch.common.bytes.BytesReference;
 import org.opensearch.common.unit.TimeValue;
@@ -63,7 +56,6 @@ import org.opensearch.search.builder.SearchSourceBuilder;
 import org.opensearch.search.slice.SliceBuilder;
 import org.opensearch.search.sort.SortBuilder;
 import org.opensearch.search.sort.SortBuilders;
-import org.opensearch.search.sort.SortOrder;
 
 @Slf4j
 public class OpenSearchSlicedSearchProvider extends SlicedSearchProvider<SearchResponse, SearchHit> {
