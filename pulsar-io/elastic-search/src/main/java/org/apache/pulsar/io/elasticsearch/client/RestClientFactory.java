@@ -93,7 +93,7 @@ public class RestClientFactory {
     }
 
     private static boolean useOpenSearchHighLevelClient(ElasticSearchVersion versionInfo){
-        if (versionInfo.getClientType().equals(ElasticSearchVersion.ClientType.OPENSEARCH)) {
+        if (ElasticSearchVersion.ClientType.OPENSEARCH.equals(versionInfo.getClientType())) {
             return true;
         }
         //this also covers the case of a bad version string and no distribution (defaults to ElasticSearch)
