@@ -235,9 +235,10 @@ public class ElasticSearchSlicedSearchProvider extends SlicedSearchProvider<Resp
 
     protected Optional<SortOptions> getDefaultSort(ElasticSearchBatchSourceConfig.PagingType pagingType){
         if (pagingType == ElasticSearchBatchSourceConfig.PagingType.PIT) {
-            return Optional.of(SortOptions.of( sb -> sb.field( fo -> fo.field("_shard_doc").order(SortOrder.Desc) ) ));
+            return Optional.of(SortOptions.of(sb -> sb.field(fo ->
+                    fo.field("_shard_doc").order(SortOrder.Asc))));
         } else if (pagingType == ElasticSearchBatchSourceConfig.PagingType.SCROLL) {
-            return Optional.of(SortOptions.of( sb -> sb.field( fo -> fo.field("_doc") ) ));
+            return Optional.of(SortOptions.of(sb -> sb.field(fo -> fo.field("_doc"))));
         }
         return Optional.empty();
     }

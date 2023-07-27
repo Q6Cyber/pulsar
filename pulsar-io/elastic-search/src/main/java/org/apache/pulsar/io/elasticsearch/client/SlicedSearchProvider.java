@@ -31,7 +31,6 @@ import java.util.concurrent.Executors;
 import java.util.function.Consumer;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
-import org.apache.pulsar.io.elasticsearch.ElasticSearchBatchSourceConfig;
 import org.apache.pulsar.io.elasticsearch.ElasticSearchRecord;
 import org.apache.pulsar.io.elasticsearch.SlicedSearchTask;
 

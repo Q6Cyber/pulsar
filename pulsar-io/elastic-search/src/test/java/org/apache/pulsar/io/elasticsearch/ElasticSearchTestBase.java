@@ -48,6 +48,9 @@ public abstract class ElasticSearchTestBase {
     public static final String OPENSEARCH = Optional.ofNullable(System.getenv("OPENSEARCH_IMAGE"))
             .orElse("opensearchproject/opensearch:1.2.4");
 
+    public static final String OPENSEARCH_2 = Optional.ofNullable(System.getenv("OPENSEARCH_IMAGE_V2"))
+            .orElse("opensearchproject/opensearch:2.9.0");
+
     protected final String elasticImageName;
 
     public ElasticSearchTestBase(String elasticImageName) {
@@ -56,8 +59,8 @@ public abstract class ElasticSearchTestBase {
 
     protected ElasticsearchContainer createElasticsearchContainer() {
         ElasticsearchContainer elasticsearchContainer;
-        if (elasticImageName.equals(OPENSEARCH)) {
-            DockerImageName dockerImageName = DockerImageName.parse(OPENSEARCH).asCompatibleSubstituteFor("docker.elastic.co/elasticsearch/elasticsearch");
+        if (elasticImageName.equals(OPENSEARCH) || elasticImageName.equals(OPENSEARCH_2)) {
+            DockerImageName dockerImageName = DockerImageName.parse(elasticImageName).asCompatibleSubstituteFor("docker.elastic.co/elasticsearch/elasticsearch");
             elasticsearchContainer = new ElasticsearchContainer(dockerImageName)
                     .withEnv("OPENSEARCH_JAVA_OPTS", "-Xms128m -Xmx256m")
                     .withEnv("bootstrap.memory_lock", "true")
@@ -85,6 +88,8 @@ public abstract class ElasticSearchTestBase {
         } else if (elasticImageName.equals(ELASTICSEARCH_8)) {
             return ElasticSearchConfig.CompatibilityMode.ELASTICSEARCH;
         } else if (elasticImageName.equals(OPENSEARCH)) {
+            return ElasticSearchConfig.CompatibilityMode.OPENSEARCH;
+        } else if (elasticImageName.equals(OPENSEARCH_2)) {
             return ElasticSearchConfig.CompatibilityMode.OPENSEARCH;
         }
         throw new IllegalStateException("unexpected image: " + elasticImageName);

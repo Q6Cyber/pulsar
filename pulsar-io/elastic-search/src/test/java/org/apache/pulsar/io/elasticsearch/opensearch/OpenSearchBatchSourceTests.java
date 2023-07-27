@@ -18,11 +18,31 @@
  */
 package org.apache.pulsar.io.elasticsearch.opensearch;
 
+import java.util.Arrays;
+import org.apache.pulsar.io.elasticsearch.ElasticSearchBatchSourceConfig;
 import org.apache.pulsar.io.elasticsearch.ElasticSearchBatchSourceTests;
+import org.testng.annotations.DataProvider;
 
 public class OpenSearchBatchSourceTests extends ElasticSearchBatchSourceTests {
 
     public OpenSearchBatchSourceTests() {
         super(OPENSEARCH);
+    }
+
+    @DataProvider(name = "readSlices")
+    @Override
+    public Object[][] readSlices() {
+        //current OpenSearch version does not support PIT
+        return Arrays.stream(super.readSlices())
+                .filter(optionArr -> optionArr[0].equals(ElasticSearchBatchSourceConfig.PagingType.SCROLL))
+                .toArray(Object[][]::new);
+    }
+
+    @DataProvider(name = "discoverSlices")
+    public Object[][] discoverSlices() {
+        return new Object[][]{
+                new Object[]{ElasticSearchBatchSourceConfig.PagingType.SCROLL, 1},
+                new Object[]{ElasticSearchBatchSourceConfig.PagingType.SCROLL, 5},
+        };
     }
 }

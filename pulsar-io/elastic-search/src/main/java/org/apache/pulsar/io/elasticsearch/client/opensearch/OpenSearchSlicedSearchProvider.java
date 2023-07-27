@@ -18,8 +18,7 @@
  */
 package org.apache.pulsar.io.elasticsearch.client.opensearch;
 
-import co.elastic.clients.elasticsearch._types.SortOptions;
-import co.elastic.clients.elasticsearch.core.ScrollResponse;
+import co.elastic.clients.elasticsearch.core.CreateResponse;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import java.io.IOException;
@@ -29,7 +28,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
@@ -39,9 +37,13 @@ import org.apache.pulsar.io.elasticsearch.ElasticSearchBatchSourceConfig;
 import org.apache.pulsar.io.elasticsearch.SlicedSearchTask;
 import org.apache.pulsar.io.elasticsearch.client.SlicedSearchProvider;
 import org.opensearch.action.ActionListener;
-import org.opensearch.action.ActionRequestValidationException;
 import org.opensearch.action.search.ClearScrollRequest;
 import org.opensearch.action.search.ClearScrollResponse;
+import org.opensearch.action.search.CreatePitRequest;
+import org.opensearch.action.search.CreatePitResponse;
+import org.opensearch.action.search.DeletePitInfo;
+import org.opensearch.action.search.DeletePitRequest;
+import org.opensearch.action.search.DeletePitResponse;
 import org.opensearch.action.search.SearchRequest;
 import org.opensearch.action.search.SearchResponse;
 import org.opensearch.action.search.SearchScrollRequest;
@@ -86,7 +88,6 @@ public class OpenSearchSlicedSearchProvider extends SlicedSearchProvider<SearchR
                     properties.put("shard", String.valueOf(shard.getShardId()));
                     properties.put("node", String.valueOf(shard.getNodeId()));
                 });
-        properties.put("type", hit.getType());
         properties.put("score", String.valueOf(hit.getScore()));
         properties.put("version", String.valueOf(hit.getVersion()));
         properties.put("seqNo", String.valueOf(hit.getSeqNo()));
@@ -113,7 +114,8 @@ public class OpenSearchSlicedSearchProvider extends SlicedSearchProvider<SearchR
 
     @Override
     public Object[] getSortValuesFromLastHit(SearchResponse response){
-        return response.getHits().getAt(response.getHits().getHits().length - 1).getRawSortValues();
+        SearchHit lastHit = response.getHits().getHits()[response.getHits().getHits().length - 1];
+        return lastHit.getSortValues();
     }
 
     @Override
@@ -128,37 +130,28 @@ public class OpenSearchSlicedSearchProvider extends SlicedSearchProvider<SearchR
 
     @Override
     public void openPit(SlicedSearchTask task) throws IOException {
-        Request request = new Request("POST", "/%s/_search/point_in_time".formatted(task.getIndex()));
-        request.addParameter("keep_alive", "%sm".formatted(task.getKeepAliveMin()));
-        Response response = client.getLowLevelClient().performRequest(request);
-        if (response.getStatusLine().getStatusCode() == 200) {
-            String responseStr = EntityUtils.toString(response.getEntity());
-            JsonNode jsonResponse = objectMapper.readTree(responseStr);
-            String pitId = jsonResponse.get("pit_id").asText();
-            task.setPitId(pitId);
+        CreatePitRequest request = new CreatePitRequest(TimeValue.timeValueMinutes(task.getKeepAliveMin()),
+                false,
+                task.getIndex());
+        CreatePitResponse response = client.createPit(request, RequestOptions.DEFAULT);
+        if (StringUtils.isNotBlank(response.getId())) {
+            task.setPitId(response.getId());
         } else {
-            throw new IOException("Unable to open pit: " + response.getStatusLine().getReasonPhrase());
+            throw new IOException("Unable to open pit: " + response.status());
         }
     }
 
     @Override
     public boolean closePit(SlicedSearchTask task) throws IOException {
-        Request request = new Request("DELETE", "/_search/point_in_time");
-        request.setJsonEntity("{\"pit_id\": [\"%s\"]}".formatted(task.getPitId()));
-        Response response = client.getLowLevelClient().performRequest(request);
-        if (response.getStatusLine().getStatusCode() == 200) {
-            String responseStr = EntityUtils.toString(response.getEntity());
-            JsonNode jsonResponse = objectMapper.readTree(responseStr);
-            ArrayNode pitsResp = (ArrayNode) jsonResponse.get("pits");
-            AtomicBoolean success = new AtomicBoolean();
-            pitsResp.forEach(jsonObj -> {
-                if (jsonObj.get("pit_id").asText().equals(task.getPitId())) {
-                    success.set(jsonObj.get("successful").asBoolean());
-                }
-            });
-            return success.get();
+        DeletePitRequest request = new DeletePitRequest(task.getPitId());
+        DeletePitResponse response = client.deletePit(request, RequestOptions.DEFAULT);
+        boolean success = response.getDeletePitResults().stream().allMatch(DeletePitInfo::isSuccessful);
+        if (success) {
+            return true;
         } else {
-            throw new IOException("Unable to close pit: " + response.getStatusLine().getReasonPhrase());
+            log.error("Unable to close pit. Status: {} Delete PIT Results: {}",
+                    response.status(), response.getDeletePitResults());
+            throw new IOException("Unable to close pit. Status: " + response.status());
         }
     }
 
@@ -250,9 +243,9 @@ public class OpenSearchSlicedSearchProvider extends SlicedSearchProvider<SearchR
 
     protected Optional<SortBuilder<?>> getDefaultSort(ElasticSearchBatchSourceConfig.PagingType pagingType){
         if (pagingType == ElasticSearchBatchSourceConfig.PagingType.PIT){
-            return Optional.of(SortBuilders.fieldSort("_shard_doc").order(SortOrder.DESC));
+            return Optional.of(SortBuilders.fieldSort("_doc"));
         } else if (pagingType == ElasticSearchBatchSourceConfig.PagingType.SCROLL) {
-            return Optional.of(SortBuilders.fieldSort("_doc") );
+            return Optional.of(SortBuilders.fieldSort("_doc"));
         }
         return Optional.empty();
     }

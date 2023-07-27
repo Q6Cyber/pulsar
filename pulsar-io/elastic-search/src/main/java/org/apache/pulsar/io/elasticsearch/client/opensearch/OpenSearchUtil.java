@@ -23,15 +23,18 @@ import java.util.Collections;
 import java.util.List;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
-import org.opensearch.common.xcontent.DeprecationHandler;
-import org.opensearch.common.xcontent.NamedXContentRegistry;
-import org.opensearch.common.xcontent.XContentParser;
+import org.opensearch.common.settings.Settings;
 import org.opensearch.common.xcontent.json.JsonXContent;
+import org.opensearch.core.xcontent.DeprecationHandler;
+import org.opensearch.core.xcontent.NamedXContentRegistry;
+import org.opensearch.core.xcontent.XContentParser;
+import org.opensearch.search.SearchModule;
 import org.opensearch.search.sort.SortBuilder;
 
 @Slf4j
 public class OpenSearchUtil {
 
+  private static final NamedXContentRegistry registry = getXContentRegistry();
   public static List<SortBuilder<?>> parseSortJson(String sortJson) throws IOException {
     if (StringUtils.isBlank(sortJson)){
       return Collections.emptyList();
@@ -45,13 +48,16 @@ public class OpenSearchUtil {
   }
 
   public static XContentParser getParser(String json) throws IOException {
-    XContentParser parser = JsonXContent.jsonXContent.createParser(NamedXContentRegistry.EMPTY,
+    XContentParser parser = JsonXContent.jsonXContent.createParser(registry,
             DeprecationHandler.IGNORE_DEPRECATIONS, json);
     if (parser.currentToken() == null) {
       parser.nextToken();
     }
-
     return parser;
+  }
+
+  private static NamedXContentRegistry getXContentRegistry() {
+    return new NamedXContentRegistry(new SearchModule(Settings.EMPTY, Collections.emptyList()).getNamedXContents());
   }
 
 }

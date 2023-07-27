@@ -16,7 +16,7 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.apache.pulsar.io.elasticsearch.opensearch;
+package org.apache.pulsar.io.elasticsearch;
 
 import static org.opensearch.search.sort.SortOrder.DESC;
 import static org.testng.Assert.assertEquals;
@@ -27,7 +27,7 @@ import org.apache.pulsar.io.elasticsearch.client.opensearch.OpenSearchUtil;
 import org.opensearch.search.sort.SortBuilder;
 import org.testng.annotations.Test;
 
-public class OpensearchXContentTests {
+public class OpenSearchXContentTests {
 
   @Test
   public void testParseSortJson() throws IOException {

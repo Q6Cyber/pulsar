@@ -25,6 +25,7 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.http.HttpHost;
 import org.apache.pulsar.functions.api.Record;
 import org.apache.pulsar.io.elasticsearch.ElasticSearchConfig;
@@ -50,7 +51,6 @@ import org.opensearch.client.RestHighLevelClient;
 import org.opensearch.client.indices.CreateIndexRequest;
 import org.opensearch.client.indices.CreateIndexResponse;
 import org.opensearch.client.indices.GetIndexRequest;
-import org.opensearch.common.Strings;
 import org.opensearch.common.settings.Settings;
 import org.opensearch.common.unit.ByteSizeUnit;
 import org.opensearch.common.unit.ByteSizeValue;
@@ -229,10 +229,10 @@ public class OpenSearchHighLevelRestClient extends RestClient implements BulkPro
     @Override
     public boolean indexDocument(String index, String documentId, String documentSource) throws IOException {
         IndexRequest indexRequest = Requests.indexRequest(index);
-        if (!Strings.isNullOrEmpty(documentId)) {
+        if (StringUtils.isNotBlank(documentId)) {
             indexRequest.id(documentId);
         }
-        indexRequest.type(config.getTypeName());
+        //types not supported in 2.x versions of the REST client.
         indexRequest.source(documentSource, XContentType.JSON);
 
         IndexResponse indexResponse = client.index(indexRequest, RequestOptions.DEFAULT);
@@ -248,7 +248,7 @@ public class OpenSearchHighLevelRestClient extends RestClient implements BulkPro
     public boolean deleteDocument(String index, String documentId) throws IOException {
         DeleteRequest deleteRequest = Requests.deleteRequest(index);
         deleteRequest.id(documentId);
-        deleteRequest.type(config.getTypeName());
+        //types not supported in 2.x versions of the REST client.
         DeleteResponse deleteResponse = client.delete(deleteRequest, RequestOptions.DEFAULT);
         if (log.isDebugEnabled()) {
             log.debug("delete result {}", deleteResponse.getResult());
@@ -302,10 +302,10 @@ public class OpenSearchHighLevelRestClient extends RestClient implements BulkPro
     @Override
     public void appendIndexRequest(BulkProcessor.BulkIndexRequest request) throws IOException {
         IndexRequest indexRequest = new IndexRequestWithPulsarRecord(request.getIndex(), request.getRecord());
-        if (!Strings.isNullOrEmpty(request.getDocumentId())) {
+        if (StringUtils.isNotBlank(request.getDocumentId())) {
             indexRequest.id(request.getDocumentId());
         }
-        indexRequest.type(config.getTypeName());
+        //types not supported in 2.x versions of the REST client.
         indexRequest.source(request.getDocumentSource(), XContentType.JSON);
         internalBulkProcessor.add(indexRequest);
     }
@@ -314,7 +314,7 @@ public class OpenSearchHighLevelRestClient extends RestClient implements BulkPro
     public void appendDeleteRequest(BulkProcessor.BulkDeleteRequest request) throws IOException {
         DeleteRequest deleteRequest = new DeleteRequestWithPulsarRecord(request.getIndex(), request.getRecord());
         deleteRequest.id(request.getDocumentId());
-        deleteRequest.type(config.getTypeName());
+        //types not supported in 2.x versions of the REST client.
         internalBulkProcessor.add(deleteRequest);
     }
 
