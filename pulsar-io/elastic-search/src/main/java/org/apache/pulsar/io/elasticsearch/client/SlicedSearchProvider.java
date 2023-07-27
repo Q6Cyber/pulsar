@@ -138,7 +138,9 @@ public abstract class SlicedSearchProvider<R, X> {
 
     public CompletableFuture<Void> slicedPitSearch(SlicedSearchTask task, Consumer<ElasticSearchRecord> recordConsumer)
             throws IOException {
-        openPit(task);
+        if (StringUtils.isBlank(task.getPitId())) {
+            openPit(task);
+        }
         CompletableFuture<? extends R> searchFut = searchWithPit(task)
                 .thenComposeAsync(response -> handlePitResponse(task, recordConsumer, response), executorService);
         return searchFut.handleAsync((r, e) -> {

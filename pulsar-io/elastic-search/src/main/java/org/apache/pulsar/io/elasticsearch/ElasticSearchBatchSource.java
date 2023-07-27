@@ -21,8 +21,10 @@ package org.apache.pulsar.io.elasticsearch;
 import co.elastic.clients.util.VisibleForTesting;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.function.Consumer;
@@ -98,8 +100,8 @@ public class ElasticSearchBatchSource extends BatchPushSource<ByteBuffer> {
             elasticSearchConfig.getNumSlices());
   }
 
-  public SlicedSearchTask builtPitTask(int sliceId){
-    return SlicedSearchTask.buildFirstPitTask(
+  public SlicedSearchTask builtPitTask(int sliceId) throws IOException {
+    SlicedSearchTask task = SlicedSearchTask.buildFirstPitTask(
             elasticSearchConfig.getIndexName(),
             elasticSearchConfig.getQuery(),
             elasticSearchConfig.getSort(),
@@ -107,6 +109,10 @@ public class ElasticSearchBatchSource extends BatchPushSource<ByteBuffer> {
             elasticSearchConfig.getKeepAliveMin(),
             sliceId,
             elasticSearchConfig.getNumSlices());
+    if (elasticsearchClient != null){
+        elasticsearchClient.getSlicedSearchProvider().openPit(task);
+    }
+    return task;
   }
 
   @Override
