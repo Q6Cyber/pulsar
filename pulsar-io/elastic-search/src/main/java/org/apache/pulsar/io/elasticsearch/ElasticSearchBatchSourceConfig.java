@@ -23,10 +23,14 @@ import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import java.io.File;
 import java.io.IOException;
 import java.io.Serializable;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 import lombok.experimental.Accessors;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.pulsar.io.common.IOConfigUtils;
 import org.apache.pulsar.io.core.SourceContext;
 import org.apache.pulsar.io.core.annotations.FieldDoc;
@@ -54,7 +58,7 @@ public class ElasticSearchBatchSourceConfig extends ElasticSearchConfig implemen
         defaultValue = "",
         help = "The comma separated ordered list of field names used to build the Pulsar key from the record value. "
             + "If this list is a singleton, the field is converted as a string. If this list has 2 or more fields, "
-            + "the generated key is a string representation of a JSON array of the field values."
+            + "the generated key is a SHA256 of the concatenated values of the list."
     )
     private String keyFields = "";
 
@@ -121,5 +125,12 @@ public class ElasticSearchBatchSourceConfig extends ElasticSearchConfig implemen
         if (pageSize > 10_000) {
             throw new IllegalArgumentException("pageSize must be less than 10,000");
         }
+    }
+
+    public List<String> getKeyFieldsList() {
+        if (StringUtils.isBlank(keyFields)) {
+            return Collections.emptyList();
+        }
+        return Arrays.asList(keyFields.split(","));
     }
 }

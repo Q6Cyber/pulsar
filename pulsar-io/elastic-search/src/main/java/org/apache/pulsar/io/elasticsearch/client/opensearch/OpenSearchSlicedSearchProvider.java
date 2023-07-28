@@ -18,6 +18,9 @@
  */
 package org.apache.pulsar.io.elasticsearch.client.opensearch;
 
+import co.elastic.clients.json.JsonData;
+import jakarta.json.JsonArray;
+import jakarta.json.JsonValue;
 import java.io.IOException;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -27,6 +30,7 @@ import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.codec.digest.DigestUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.pulsar.io.elasticsearch.ElasticSearchBatchSourceConfig;
 import org.apache.pulsar.io.elasticsearch.SlicedSearchTask;
@@ -46,6 +50,7 @@ import org.opensearch.client.Cancellable;
 import org.opensearch.client.RequestOptions;
 import org.opensearch.client.RestHighLevelClient;
 import org.opensearch.common.bytes.BytesReference;
+import org.opensearch.common.document.DocumentField;
 import org.opensearch.common.unit.TimeValue;
 import org.opensearch.index.query.QueryBuilders;
 import org.opensearch.search.Scroll;
@@ -99,9 +104,26 @@ public class OpenSearchSlicedSearchProvider extends SlicedSearchProvider<SearchR
     }
 
     @Override
-    public String buildKey(SearchHit hit) {
-        //todo build key based on configured fields
-        return null;
+    public String buildKey(SlicedSearchTask task, SearchHit hit) {
+        Map<String, DocumentField> fieldsMap = hit.getFields();
+        List<String> keys = task.getKeyFields()
+                .stream()
+                .map(key -> getValueFromFieldMap(key, fieldsMap))
+                .toList();
+        if (keys.isEmpty()) {
+            return "";
+        }
+        if (keys.size() == 1) {
+            return keys.get(0);
+        }
+        return DigestUtils.sha256Hex(String.join("", keys));
+    }
+
+    public String getValueFromFieldMap(String key, Map<String, DocumentField> fieldMap) {
+        return Optional.of(fieldMap.get(key))
+                .map(DocumentField::getValue)
+                .map(Object::toString)
+                .orElse("");
     }
 
     @Override
@@ -217,6 +239,9 @@ public class OpenSearchSlicedSearchProvider extends SlicedSearchProvider<SearchR
 
         if (StringUtils.isNotBlank(task.getQuery())) {
             searchSourceBuilder.query(QueryBuilders.wrapperQuery(task.getQuery()));
+        }
+        if (task.getKeyFields() != null && !task.getKeyFields().isEmpty()) {
+            task.getKeyFields().forEach(searchSourceBuilder::fetchField);
         }
         searchSourceBuilder.size(task.getSize());
         if (task.getTotalSlices() > 1){

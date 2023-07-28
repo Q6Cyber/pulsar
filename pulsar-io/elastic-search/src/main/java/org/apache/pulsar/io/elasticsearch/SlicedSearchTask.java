@@ -19,6 +19,7 @@
 package org.apache.pulsar.io.elasticsearch;
 
 import java.io.Serializable;
+import java.util.List;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -38,6 +39,7 @@ import lombok.experimental.Accessors;
 public class SlicedSearchTask implements Serializable {
   private String index;
   private String query;
+  private List<String> keyFields;
   private String sort;
   private ElasticSearchBatchSourceConfig.PagingType pagingType;
   private int size;
@@ -48,11 +50,12 @@ public class SlicedSearchTask implements Serializable {
   private int keepAliveMin;
   private Object[] searchAfter;
 
-  public static SlicedSearchTask buildFirstScrollTask(String index, String query, String sort, int size,
+  public static SlicedSearchTask buildFirstScrollTask(String index, String query, List<String> keyFields, String sort, int size,
                                                       int keepAliveMin, int sliceId, int totalSlices) {
     return SlicedSearchTask.builder()
             .pagingType(ElasticSearchBatchSourceConfig.PagingType.SCROLL)
             .index(index)
+            .keyFields(keyFields)
             .query(query)
             .sort(sort)
             .size(size)
@@ -62,12 +65,13 @@ public class SlicedSearchTask implements Serializable {
             .build();
   }
 
-  public static SlicedSearchTask buildFirstPitTask(String index, String query, String sort, int size, int keepAliveMin,
+  public static SlicedSearchTask buildFirstPitTask(String index, String query, List<String> keyFields, String sort, int size, int keepAliveMin,
                                             int sliceId, int totalSlices){
     return SlicedSearchTask.builder()
             .pagingType(ElasticSearchBatchSourceConfig.PagingType.PIT)
             .index(index)
             .query(query)
+            .keyFields(keyFields)
             .sort(sort)
             .size(size)
             .keepAliveMin(keepAliveMin)

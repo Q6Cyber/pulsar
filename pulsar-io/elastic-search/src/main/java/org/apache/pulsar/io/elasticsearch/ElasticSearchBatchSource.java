@@ -93,6 +93,7 @@ public class ElasticSearchBatchSource extends BatchPushSource<ByteBuffer> {
     return SlicedSearchTask.buildFirstScrollTask(
             elasticSearchConfig.getIndexName(),
             elasticSearchConfig.getQuery(),
+            elasticSearchConfig.getKeyFieldsList(),
             elasticSearchConfig.getSort(),
             elasticSearchConfig.getPageSize(),
             elasticSearchConfig.getKeepAliveMin(),
@@ -104,6 +105,7 @@ public class ElasticSearchBatchSource extends BatchPushSource<ByteBuffer> {
     SlicedSearchTask task = SlicedSearchTask.buildFirstPitTask(
             elasticSearchConfig.getIndexName(),
             elasticSearchConfig.getQuery(),
+            elasticSearchConfig.getKeyFieldsList(),
             elasticSearchConfig.getSort(),
             elasticSearchConfig.getPageSize(),
             elasticSearchConfig.getKeepAliveMin(),

@@ -32,7 +32,7 @@ public class OpenSearchBatchSourceTests extends ElasticSearchBatchSourceTests {
     @DataProvider(name = "readSlices")
     @Override
     public Object[][] readSlices() {
-        //current OpenSearch version does not support PIT
+        //OpenSearch version 1.X does not support PIT
         return Arrays.stream(super.readSlices())
                 .filter(optionArr -> optionArr[0].equals(ElasticSearchBatchSourceConfig.PagingType.SCROLL))
                 .toArray(Object[][]::new);
@@ -44,5 +44,13 @@ public class OpenSearchBatchSourceTests extends ElasticSearchBatchSourceTests {
                 new Object[]{ElasticSearchBatchSourceConfig.PagingType.SCROLL, 1},
                 new Object[]{ElasticSearchBatchSourceConfig.PagingType.SCROLL, 5},
         };
+    }
+
+    @DataProvider(name = "testQuery")
+    public Object[][] testQuery() {
+        //OpenSearch version 1.X does not support PIT
+        return Arrays.stream(super.testQuery())
+                .filter(optionArr -> optionArr[0].equals(ElasticSearchBatchSourceConfig.PagingType.SCROLL))
+                .toArray(Object[][]::new);
     }
 }

@@ -61,13 +61,16 @@ public abstract class SlicedSearchProvider<R, X> {
     public abstract List<X> getHits(R response);
     public abstract Map<String, String> buildRecordProperties(X hit);
     public abstract byte[] getHitBytes(X hit);
-    public abstract String buildKey(X hit);
+    public abstract String buildKey(SlicedSearchTask task, X hit);
 
     protected ExecutorService executorService = Executors.newWorkStealingPool();
-    public ElasticSearchRecord buildRecordFromSearchHit(X hit) {
+    public ElasticSearchRecord buildRecordFromSearchHit(SlicedSearchTask task, X hit) {
         Map<String, String> properties = buildRecordProperties(hit);
         byte[] source = getHitBytes(hit);
-        String key = buildKey(hit);
+        String key = buildKey(task, hit);
+        if (StringUtils.isBlank(key)) {
+            key = null; //todo if key fields were configured, should this be an error?
+        }
         ElasticSearchRecord record = new ElasticSearchRecord(source, key, properties);
         return record;
     }
@@ -107,7 +110,7 @@ public abstract class SlicedSearchProvider<R, X> {
             return CompletableFuture.completedFuture(null);
         }
         getHits(previousSearchResponse).stream()
-                .map(this::buildRecordFromSearchHit)
+                .map(hit -> this.buildRecordFromSearchHit(task, hit))
                 .forEach(recordConsumer);
         updateTaskFromSearchResponse(task, previousSearchResponse);
         try {
@@ -125,7 +128,7 @@ public abstract class SlicedSearchProvider<R, X> {
             return CompletableFuture.completedFuture(null);
         }
         getHits(previousSearchResponse).stream()
-                .map(this::buildRecordFromSearchHit)
+                .map(hit -> this.buildRecordFromSearchHit(task, hit))
                 .forEach(recordConsumer);
         updateTaskFromSearchResponse(task, previousSearchResponse);
         try {

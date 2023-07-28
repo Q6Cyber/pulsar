@@ -25,6 +25,7 @@ import co.elastic.clients.elasticsearch._types.SlicedScroll;
 import co.elastic.clients.elasticsearch._types.SortOptions;
 import co.elastic.clients.elasticsearch._types.SortOrder;
 import co.elastic.clients.elasticsearch._types.Time;
+import co.elastic.clients.elasticsearch._types.query_dsl.FieldAndFormat;
 import co.elastic.clients.elasticsearch._types.query_dsl.Query;
 import co.elastic.clients.elasticsearch.core.ClearScrollRequest;
 import co.elastic.clients.elasticsearch.core.ClearScrollResponse;
@@ -43,17 +44,23 @@ import co.elastic.clients.json.JsonData;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.google.common.collect.Iterables;
+import jakarta.json.JsonArray;
+import jakarta.json.JsonNumber;
+import jakarta.json.JsonString;
+import jakarta.json.JsonValue;
 import java.io.IOException;
 import java.io.StringReader;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
+import org.apache.commons.codec.digest.DigestUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.pulsar.io.elasticsearch.ElasticSearchBatchSourceConfig;
 import org.apache.pulsar.io.elasticsearch.SlicedSearchTask;
@@ -121,10 +128,73 @@ public class ElasticSearchSlicedSearchProvider extends SlicedSearchProvider<Resp
     }
 
     @Override
-    public String buildKey(Hit hit) {
-        //todo
-        return null;
+    public String buildKey(SlicedSearchTask task, Hit<JsonData> hit) {
+        Map<String, JsonData> fieldsMap = hit.fields();
+        Map<String, List<String>> ignoreFieldsMap = hit.ignoredFieldValues();
+        List<String> keys = task.getKeyFields()
+                .stream()
+                .map(key -> getValueFromFieldMap(key, fieldsMap, ignoreFieldsMap))
+                .toList();
+        if (keys.isEmpty()) {
+            return "";
+        }
+        if (keys.size() == 1) {
+            return keys.get(0);
+        }
+        return DigestUtils.sha256Hex(String.join("", keys));
     }
+
+    public String getValueFromFieldMap(String key, Map<String, JsonData> fieldMap,
+                                       Map<String, List<String>> ignoredMap) {
+        JsonValue fieldVal = Optional.ofNullable(fieldMap.get(key))
+                .map(JsonData::toJson)
+                .orElse(JsonValue.NULL);
+        if (!fieldVal.equals(JsonValue.NULL) && fieldVal.getValueType().equals(JsonValue.ValueType.ARRAY)) {
+            JsonArray array = fieldVal.asJsonArray();
+            if (array.size() == 1) {
+                JsonValue val = array.get(0);
+                return getStringForValType(val);
+            } else {
+                return getStringForValType(array);
+            }
+        }
+        if (ignoredMap.containsKey(key)) {
+            List<String> ignoredValList =  ignoredMap.get(key);
+            if (ignoredValList.size() == 1) {
+                return ignoredValList.get(0);
+            } else {
+                return ignoredValList.toString();
+            }
+        }
+        return "";
+    }
+
+    String getStringForValType(JsonValue value){
+        switch (value.getValueType()) {
+            case ARRAY, OBJECT -> {
+                return value.toString();
+            }
+            case STRING -> {
+                JsonString jsonString = (JsonString) value;
+                return jsonString.getString();
+            }
+            case NUMBER -> {
+                JsonNumber jsonNumber = (JsonNumber) value;
+                return jsonNumber.toString();
+            }
+            case TRUE -> {
+                return Boolean.TRUE.toString();
+            }
+            case FALSE -> {
+                return Boolean.FALSE.toString();
+            }
+            default -> {
+                return "";
+            }
+        }
+    }
+
+
 
     @Override
     public void openPit(SlicedSearchTask task) throws IOException {
@@ -209,6 +279,9 @@ public class ElasticSearchSlicedSearchProvider extends SlicedSearchProvider<Resp
             Query q = new Query.Builder().withJson(new StringReader(task.getQuery())).build();
             request.query(q);
         }
+        if (task.getKeyFields() != null && !task.getKeyFields().isEmpty()) {
+            request.fields(getFields(task.getKeyFields()));
+        }
         if (StringUtils.isNotBlank(task.getSort())) {
             JsonNode sortJsonNode = objectMapper.readTree(task.getSort());
             List<SortOptions> sortOptions = new ArrayList<>();
@@ -255,6 +328,12 @@ public class ElasticSearchSlicedSearchProvider extends SlicedSearchProvider<Resp
         } else {
             return FieldValue.of(value.toString());
         }
+    }
+
+    private List<FieldAndFormat> getFields(List<String> fields) {
+        return fields.stream()
+                .map(f -> new FieldAndFormat.Builder().field(f).build())
+                .collect(Collectors.toList());
     }
 
 }
