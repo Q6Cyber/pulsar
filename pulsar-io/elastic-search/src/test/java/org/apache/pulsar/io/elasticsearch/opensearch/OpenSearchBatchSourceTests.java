@@ -40,10 +40,10 @@ public class OpenSearchBatchSourceTests extends ElasticSearchBatchSourceTests {
 
     @DataProvider(name = "discoverSlices")
     public Object[][] discoverSlices() {
-        return new Object[][]{
-                new Object[]{ElasticSearchBatchSourceConfig.PagingType.SCROLL, 1},
-                new Object[]{ElasticSearchBatchSourceConfig.PagingType.SCROLL, 5},
-        };
+        //OpenSearch version 1.X does not support PIT
+        return Arrays.stream(super.discoverSlices())
+                .filter(optionArr -> optionArr[0].equals(ElasticSearchBatchSourceConfig.PagingType.SCROLL))
+                .toArray(Object[][]::new);
     }
 
     @DataProvider(name = "testQuery")
