@@ -48,7 +48,7 @@ public class ElasticSearchBatchSourceConfig extends ElasticSearchConfig implemen
 
     @FieldDoc(
         required = false,
-        defaultValue = "",
+        defaultValue = "SCROLL",
         help = "The type of paging to use, Point in Time or Scroll."
     )
     private PagingType pagingType = PagingType.SCROLL;
