@@ -50,8 +50,8 @@ public class SlicedSearchTask implements Serializable {
   private int keepAliveMin;
   private Object[] searchAfter;
 
-  public static SlicedSearchTask buildFirstScrollTask(String index, String query, List<String> keyFields, String sort, int size,
-                                                      int keepAliveMin, int sliceId, int totalSlices) {
+  public static SlicedSearchTask buildFirstScrollTask(String index, String query, List<String> keyFields, String sort,
+                                                      int size, int keepAliveMin, int sliceId, int totalSlices) {
     return SlicedSearchTask.builder()
             .pagingType(ElasticSearchBatchSourceConfig.PagingType.SCROLL)
             .index(index)
@@ -65,8 +65,8 @@ public class SlicedSearchTask implements Serializable {
             .build();
   }
 
-  public static SlicedSearchTask buildFirstPitTask(String index, String query, List<String> keyFields, String sort, int size, int keepAliveMin,
-                                            int sliceId, int totalSlices){
+  public static SlicedSearchTask buildFirstPitTask(String index, String query, List<String> keyFields, String sort,
+                                                   int size, int keepAliveMin, int sliceId, int totalSlices){
     return SlicedSearchTask.builder()
             .pagingType(ElasticSearchBatchSourceConfig.PagingType.PIT)
             .index(index)

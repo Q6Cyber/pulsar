@@ -18,9 +18,6 @@
  */
 package org.apache.pulsar.io.elasticsearch.client.opensearch;
 
-import co.elastic.clients.json.JsonData;
-import jakarta.json.JsonArray;
-import jakarta.json.JsonValue;
 import java.io.IOException;
 import java.util.Arrays;
 import java.util.HashMap;
