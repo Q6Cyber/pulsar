@@ -18,6 +18,8 @@
 #
 
 name: elastic_search
-description: Writes data into Elastic Search
+description: Elastic Search sink and batch source connector
 sinkClass: org.apache.pulsar.io.elasticsearch.ElasticSearchSink
+sourceClass: org.apache.pulsar.io.elasticsearch.ElasticSearchBatchSource
 sinkConfigClass: org.apache.pulsar.io.elasticsearch.ElasticSearchConfig
+sourceConfigClass: org.apache.pulsar.io.elasticsearch.ElasticSearchBatchSourceConfig

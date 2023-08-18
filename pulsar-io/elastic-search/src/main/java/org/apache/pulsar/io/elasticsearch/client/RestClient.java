@@ -18,6 +18,9 @@
  */
 package org.apache.pulsar.io.elasticsearch.client;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
 import com.google.common.base.Strings;
 import java.io.Closeable;
 import java.io.File;
@@ -76,6 +79,10 @@ public abstract class RestClient implements Closeable {
     protected final ConfigCallback configCallback;
     private final ScheduledExecutorService executorService;
 
+    protected final ObjectMapper objectMapper = new ObjectMapper()
+        .configure(SerializationFeature.INDENT_OUTPUT, false)
+        .setSerializationInclusion(JsonInclude.Include.ALWAYS);
+
     public RestClient(ElasticSearchConfig elasticSearchConfig, BulkProcessor.Listener bulkProcessorListener) {
         this.config = elasticSearchConfig;
         this.configCallback = new ConfigCallback();
@@ -101,7 +108,7 @@ public abstract class RestClient implements Closeable {
 
     public abstract long totalHits(String index) throws IOException;
     public abstract long totalHits(String index, String query) throws IOException;
-
+    public abstract SlicedSearchProvider getSlicedSearchProvider();
     public abstract BulkProcessor getBulkProcessor();
 
     public class ConfigCallback implements RestClientBuilder.HttpClientConfigCallback,
