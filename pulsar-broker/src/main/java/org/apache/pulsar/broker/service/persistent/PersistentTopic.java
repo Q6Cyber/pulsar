@@ -905,8 +905,8 @@ public class PersistentTopic extends AbstractTopic implements Topic, AddEntryCal
                             consumer.close();
                         } catch (BrokerServiceException e) {
                             if (e instanceof ConsumerBusyException) {
-                                log.warn("[{}][{}] Consumer {} {} already connected",
-                                        topic, subscriptionName, consumerId, consumerName);
+                                log.warn("[{}][{}] Consumer {} {} already connected: {}",
+                                        topic, subscriptionName, consumerId, consumerName, e.getMessage());
                             } else if (e instanceof SubscriptionBusyException) {
                                 log.warn("[{}][{}] {}", topic, subscriptionName, e.getMessage());
                             }
@@ -936,8 +936,8 @@ public class PersistentTopic extends AbstractTopic implements Topic, AddEntryCal
                 decrementUsageCount();
 
                 if (ex.getCause() instanceof ConsumerBusyException) {
-                    log.warn("[{}][{}] Consumer {} {} already connected", topic, subscriptionName, consumerId,
-                            consumerName);
+                    log.warn("[{}][{}] Consumer {} {} already connected: {}", topic, subscriptionName, consumerId,
+                            consumerName, ex.getCause().getMessage());
                     Consumer consumer = null;
                     try {
                         consumer = subscriptionFuture.isDone() ? getActiveConsumer(subscriptionFuture.get()) : null;
@@ -1165,15 +1165,14 @@ public class PersistentTopic extends AbstractTopic implements Topic, AddEntryCal
 
     private void asyncDeleteCursorWithClearDelayedMessage(String subscriptionName,
                                                           CompletableFuture<Void> unsubscribeFuture) {
-        if (!isDelayedDeliveryEnabled()
-                || !(brokerService.getDelayedDeliveryTrackerFactory() instanceof BucketDelayedDeliveryTrackerFactory)) {
-            asyncDeleteCursor(subscriptionName, unsubscribeFuture);
-            return;
-        }
-
         PersistentSubscription persistentSubscription = subscriptions.get(subscriptionName);
         if (persistentSubscription == null) {
             log.warn("[{}][{}] Can't find subscription, skip clear delayed message", topic, subscriptionName);
+            unsubscribeFuture.complete(null);
+            return;
+        }
+        if (!isDelayedDeliveryEnabled()
+                || !(brokerService.getDelayedDeliveryTrackerFactory() instanceof BucketDelayedDeliveryTrackerFactory)) {
             asyncDeleteCursor(subscriptionName, unsubscribeFuture);
             return;
         }
@@ -1547,7 +1546,6 @@ public class PersistentTopic extends AbstractTopic implements Topic, AddEntryCal
     CompletableFuture<Void> checkReplicationAndRetryOnFailure() {
         CompletableFuture<Void> result = new CompletableFuture<Void>();
         checkReplication().thenAccept(res -> {
-            log.info("[{}] Policies updated successfully", topic);
             result.complete(null);
         }).exceptionally(th -> {
             log.error("[{}] Policies update failed {}, scheduled retry in {} seconds", topic, th.getMessage(),
@@ -1567,7 +1565,8 @@ public class PersistentTopic extends AbstractTopic implements Topic, AddEntryCal
         return messageDeduplication.checkStatus();
     }
 
-    private CompletableFuture<Void> checkPersistencePolicies() {
+    @VisibleForTesting
+    CompletableFuture<Void> checkPersistencePolicies() {
         TopicName topicName = TopicName.get(topic);
         CompletableFuture<Void> future = new CompletableFuture<>();
         brokerService.getManagedLedgerConfig(topicName).thenAccept(config -> {
@@ -2731,7 +2730,9 @@ public class PersistentTopic extends AbstractTopic implements Topic, AddEntryCal
                     .toMillis(nsExpirationTime == null ? defaultExpirationTime : nsExpirationTime);
             if (expirationTimeMillis > 0) {
                 subscriptions.forEach((subName, sub) -> {
-                    if (sub.dispatcher != null && sub.dispatcher.isConsumerConnected() || sub.isReplicated()) {
+                    if (sub.dispatcher != null && sub.dispatcher.isConsumerConnected()
+                            || sub.isReplicated()
+                            || isCompactionSubscription(subName)) {
                         return;
                     }
                     if (System.currentTimeMillis() - sub.cursor.getLastActive() > expirationTimeMillis) {
@@ -3498,16 +3499,14 @@ public class PersistentTopic extends AbstractTopic implements Topic, AddEntryCal
             replicators.forEach((name, replicator) -> replicator.updateRateLimiter());
             shadowReplicators.forEach((name, replicator) -> replicator.updateRateLimiter());
             checkMessageExpiry();
-            checkReplicationAndRetryOnFailure();
-
-            checkDeduplicationStatus();
-
-            preCreateSubscriptionForCompactionIfNeeded();
-
-            // update managed ledger config
-            checkPersistencePolicies();
-        }).exceptionally(e -> {
-            Throwable t = e instanceof CompletionException ? e.getCause() : e;
+        })
+        .thenCompose(__ -> checkReplicationAndRetryOnFailure())
+        .thenCompose(__ -> checkDeduplicationStatus())
+        .thenCompose(__ -> preCreateSubscriptionForCompactionIfNeeded())
+        .thenCompose(__ -> checkPersistencePolicies())
+        .thenAccept(__ -> log.info("[{}] Policies updated successfully", topic))
+        .exceptionally(e -> {
+            Throwable t = FutureUtil.unwrapCompletionException(e);
             log.error("[{}] update topic policy error: {}", topic, t.getMessage(), t);
             return null;
         });
