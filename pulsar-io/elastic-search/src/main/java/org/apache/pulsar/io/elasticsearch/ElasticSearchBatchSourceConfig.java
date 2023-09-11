@@ -18,6 +18,7 @@
  */
 package org.apache.pulsar.io.elasticsearch;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import java.io.File;
@@ -42,6 +43,7 @@ import org.apache.pulsar.io.core.annotations.FieldDoc;
 @EqualsAndHashCode(callSuper = true)
 @Data
 @Accessors(chain = true)
+@JsonIgnoreProperties(ignoreUnknown = true)
 public class ElasticSearchBatchSourceConfig extends ElasticSearchConfig implements Serializable {
 
     private static final long serialVersionUID = 1L;
