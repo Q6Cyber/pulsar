@@ -2079,7 +2079,8 @@ public class ServerCnx extends PulsarHandler implements TransportCnx {
                         (PositionImpl) markDeletePosition,
                         partitionIndex,
                         requestId,
-                        consumer.getSubscription().getName());
+                        consumer.getSubscription().getName(),
+                        consumer.readCompacted());
             }).exceptionally(e -> {
                 writeAndFlush(Commands.newError(getLastMessageId.getRequestId(),
                         ServerError.UnknownError, "Failed to recover Transaction Buffer."));
@@ -2097,15 +2098,17 @@ public class ServerCnx extends PulsarHandler implements TransportCnx {
             PositionImpl markDeletePosition,
             int partitionIndex,
             long requestId,
-            String subscriptionName) {
+            String subscriptionName,
+            boolean readCompacted) {
 
         PersistentTopic persistentTopic = (PersistentTopic) topic;
         ManagedLedgerImpl ml = (ManagedLedgerImpl) persistentTopic.getManagedLedger();
 
         // If it's not pointing to a valid entry, respond messageId of the current position.
         // If the compaction cursor reach the end of the topic, respond messageId from compacted ledger
-        CompletableFuture<Position> compactionHorizonFuture =
-                persistentTopic.getTopicCompactionService().getLastCompactedPosition();
+        CompletableFuture<Position> compactionHorizonFuture = readCompacted
+                ? persistentTopic.getTopicCompactionService().getLastCompactedPosition() :
+                CompletableFuture.completedFuture(null);
 
         compactionHorizonFuture.whenComplete((compactionHorizon, ex) -> {
             if (ex != null) {
@@ -2114,8 +2117,22 @@ public class ServerCnx extends PulsarHandler implements TransportCnx {
                 return;
             }
 
-            if (lastPosition.getEntryId() == -1 || (compactionHorizon != null
-                    && lastPosition.compareTo((PositionImpl) compactionHorizon) <= 0)) {
+            if (lastPosition.getEntryId() == -1 || !ml.ledgerExists(lastPosition.getLedgerId())) {
+                // there is no entry in the original topic
+                if (compactionHorizon != null) {
+                    // if readCompacted is true, we need to read the last entry from compacted topic
+                    handleLastMessageIdFromCompactionService(persistentTopic, requestId, partitionIndex,
+                            markDeletePosition);
+                } else {
+                    // if readCompacted is false, we need to return MessageId.earliest
+                    writeAndFlush(Commands.newGetLastMessageIdResponse(requestId, -1, -1, partitionIndex, -1,
+                            markDeletePosition != null ? markDeletePosition.getLedgerId() : -1,
+                            markDeletePosition != null ? markDeletePosition.getEntryId() : -1));
+                }
+                return;
+            }
+
+            if (compactionHorizon != null && lastPosition.compareTo((PositionImpl) compactionHorizon) <= 0) {
                 handleLastMessageIdFromCompactionService(persistentTopic, requestId, partitionIndex,
                         markDeletePosition);
                 return;
@@ -2144,7 +2161,8 @@ public class ServerCnx extends PulsarHandler implements TransportCnx {
 
             batchSizeFuture.whenComplete((batchSize, e) -> {
                 if (e != null) {
-                    if (e.getCause() instanceof ManagedLedgerException.NonRecoverableLedgerException) {
+                    if (e.getCause() instanceof ManagedLedgerException.NonRecoverableLedgerException
+                            && readCompacted) {
                         handleLastMessageIdFromCompactionService(persistentTopic, requestId, partitionIndex,
                                 markDeletePosition);
                     } else {
@@ -2371,9 +2389,10 @@ public class ServerCnx extends PulsarHandler implements TransportCnx {
             schemaVersion = schemaService.versionFromBytes(commandGetSchema.getSchemaVersion());
         }
 
+        final String topic = commandGetSchema.getTopic();
         String schemaName;
         try {
-            schemaName = TopicName.get(commandGetSchema.getTopic()).getSchemaName();
+            schemaName = TopicName.get(topic).getSchemaName();
         } catch (Throwable t) {
             commandSender.sendGetSchemaErrorResponse(requestId, ServerError.InvalidTopicName, t.getMessage());
             return;
@@ -2382,7 +2401,7 @@ public class ServerCnx extends PulsarHandler implements TransportCnx {
         schemaService.getSchema(schemaName, schemaVersion).thenAccept(schemaAndMetadata -> {
             if (schemaAndMetadata == null) {
                 commandSender.sendGetSchemaErrorResponse(requestId, ServerError.TopicNotFound,
-                        String.format("Topic not found or no-schema %s", commandGetSchema.getTopic()));
+                        String.format("Topic not found or no-schema %s", topic));
             } else {
                 commandSender.sendGetSchemaResponse(requestId,
                         SchemaInfoUtil.newSchemaInfo(schemaName, schemaAndMetadata.schema), schemaAndMetadata.version);

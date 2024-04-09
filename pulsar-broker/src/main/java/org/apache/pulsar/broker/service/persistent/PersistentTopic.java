@@ -83,6 +83,7 @@ import org.apache.commons.lang3.StringUtils;
 import org.apache.pulsar.broker.PulsarServerException;
 import org.apache.pulsar.broker.delayed.BucketDelayedDeliveryTrackerFactory;
 import org.apache.pulsar.broker.delayed.DelayedDeliveryTrackerFactory;
+import org.apache.pulsar.broker.loadbalance.extensions.ExtensibleLoadManagerImpl;
 import org.apache.pulsar.broker.loadbalance.extensions.channel.ServiceUnitStateChannelImpl;
 import org.apache.pulsar.broker.loadbalance.extensions.channel.ServiceUnitStateCompactionStrategy;
 import org.apache.pulsar.broker.namespace.NamespaceService;
@@ -162,6 +163,7 @@ import org.apache.pulsar.common.policies.data.stats.TopicMetricBean;
 import org.apache.pulsar.common.policies.data.stats.TopicStatsImpl;
 import org.apache.pulsar.common.protocol.Commands;
 import org.apache.pulsar.common.protocol.schema.SchemaData;
+import org.apache.pulsar.common.protocol.schema.SchemaVersion;
 import org.apache.pulsar.common.schema.SchemaType;
 import org.apache.pulsar.common.topics.TopicCompactionStrategy;
 import org.apache.pulsar.common.util.Codec;
@@ -305,7 +307,8 @@ public class PersistentTopic extends AbstractTopic implements Topic, AddEntryCal
         TopicName topicName = TopicName.get(topic);
         if (brokerService.getPulsar().getConfiguration().isTransactionCoordinatorEnabled()
                 && !isEventSystemTopic(topicName)
-                && !NamespaceService.isHeartbeatNamespace(topicName.getNamespaceObject())) {
+                && !NamespaceService.isHeartbeatNamespace(topicName.getNamespaceObject())
+                && !ExtensibleLoadManagerImpl.isInternalTopic(topic)) {
             this.transactionBuffer = brokerService.getPulsar()
                     .getTransactionBufferProvider().newTransactionBuffer(this);
         } else {
@@ -885,8 +888,8 @@ public class PersistentTopic extends AbstractTopic implements Topic, AddEntryCal
                 lock.readLock().unlock();
             }
 
-            CompletableFuture<? extends Subscription> subscriptionFuture = isDurable ? //
-                    getDurableSubscription(subscriptionName, initialPosition, startMessageRollbackDurationSec,
+            CompletableFuture<? extends Subscription> subscriptionFuture = isDurable
+                    ? getDurableSubscription(subscriptionName, initialPosition, startMessageRollbackDurationSec,
                             replicatedSubscriptionState, subscriptionProperties)
                     : getNonDurableSubscription(subscriptionName, startMessageId, initialPosition,
                     startMessageRollbackDurationSec, readCompacted, subscriptionProperties);
@@ -977,7 +980,9 @@ public class PersistentTopic extends AbstractTopic implements Topic, AddEntryCal
     }
 
     private CompletableFuture<Subscription> getDurableSubscription(String subscriptionName,
-            InitialPosition initialPosition, long startMessageRollbackDurationSec, boolean replicated,
+                                                                   InitialPosition initialPosition,
+                                                                   long startMessageRollbackDurationSec,
+                                                                   boolean replicated,
                                                                    Map<String, String> subscriptionProperties) {
         CompletableFuture<Subscription> subscriptionFuture = new CompletableFuture<>();
         if (checkMaxSubscriptionsPerTopicExceed(subscriptionName)) {
@@ -987,7 +992,6 @@ public class PersistentTopic extends AbstractTopic implements Topic, AddEntryCal
         }
 
         Map<String, Long> properties = PersistentSubscription.getBaseCursorProperties(replicated);
-
         ledger.asyncOpenCursor(Codec.encode(subscriptionName), initialPosition, properties, subscriptionProperties,
                 new OpenCursorCallback() {
             @Override
@@ -2333,7 +2337,7 @@ public class PersistentTopic extends AbstractTopic implements Topic, AddEntryCal
         stats.backlogSize = ledger.getEstimatedBacklogSize();
         stats.deduplicationStatus = messageDeduplication.getStatus().toString();
         stats.topicEpoch = topicEpoch.orElse(null);
-        stats.ownerBroker = brokerService.pulsar().getLookupServiceAddress();
+        stats.ownerBroker = brokerService.pulsar().getBrokerId();
         stats.offloadedStorageSize = ledger.getOffloadedSize();
         stats.lastOffloadLedgerId = ledger.getLastOffloadedLedgerId();
         stats.lastOffloadSuccessTimeStamp = ledger.getLastOffloadedSuccessTimestamp();
@@ -2370,6 +2374,15 @@ public class PersistentTopic extends AbstractTopic implements Topic, AddEntryCal
     private Optional<CompactorMXBean> getCompactorMXBean() {
         Compactor compactor = brokerService.pulsar().getNullableCompactor();
         return Optional.ofNullable(compactor).map(c -> c.getStats());
+    }
+
+    @Override
+    public CompletableFuture<SchemaVersion> deleteSchema() {
+        if (TopicName.get(getName()).isPartitioned()) {
+            // Only delete schema when partitioned metadata is deleting.
+            return CompletableFuture.completedFuture(null);
+        }
+        return brokerService.deleteSchema(TopicName.get(getName()));
     }
 
     @Override
@@ -2677,7 +2690,7 @@ public class PersistentTopic extends AbstractTopic implements Topic, AddEntryCal
 
             replCloseFuture.thenCompose(v -> delete(deleteMode == InactiveTopicDeleteMode.delete_when_no_subscriptions,
                 deleteMode == InactiveTopicDeleteMode.delete_when_subscriptions_caught_up, false))
-                    .thenApply((res) -> tryToDeletePartitionedMetadata())
+                    .thenCompose((res) -> tryToDeletePartitionedMetadata())
                     .thenRun(() -> log.info("[{}] Topic deleted successfully due to inactivity", topic))
                     .exceptionally(e -> {
                         if (e.getCause() instanceof TopicBusyException) {
@@ -2685,6 +2698,8 @@ public class PersistentTopic extends AbstractTopic implements Topic, AddEntryCal
                             if (log.isDebugEnabled()) {
                                 log.debug("[{}] Did not delete busy topic: {}", topic, e.getCause().getMessage());
                             }
+                        } else if (e.getCause() instanceof UnsupportedOperationException) {
+                            log.info("[{}] Skip to delete partitioned topic: {}", topic, e.getCause().getMessage());
                         } else {
                             log.warn("[{}] Inactive topic deletion failed", topic, e);
                         }
@@ -2729,7 +2744,7 @@ public class PersistentTopic extends AbstractTopic implements Topic, AddEntryCal
                                                         .filter(topicExist -> topicExist)
                                                         .findAny();
                                                 if (anyExistPartition.isPresent()) {
-                                                    log.error("[{}] Delete topic metadata failed because"
+                                                    log.info("[{}] Delete topic metadata failed because"
                                                             + " another partition exist.", topicName);
                                                     throw new UnsupportedOperationException(
                                                             String.format("Another partition exists for [%s].",

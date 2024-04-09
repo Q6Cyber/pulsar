@@ -124,7 +124,6 @@ public class LoadBalancerTest {
             config.setAdvertisedAddress("localhost");
             config.setWebServicePort(Optional.of(0));
             config.setBrokerServicePortTls(Optional.of(0));
-            config.setWebServicePortTls(Optional.of(0));
             config.setMetadataStoreUrl("zk:127.0.0.1:" + bkEnsemble.getZookeeperPort());
             config.setBrokerShutdownTimeoutMs(0L);
             config.setLoadBalancerOverrideBrokerNicSpeedGbps(Optional.of(1.0d));
@@ -139,7 +138,7 @@ public class LoadBalancerTest {
             brokerNativeBrokerPorts[i] = pulsarServices[i].getBrokerListenPort().get();
 
             brokerUrls[i] = new URL("http://127.0.0.1" + ":" + brokerWebServicePorts[i]);
-            lookupAddresses[i] = pulsarServices[i].getAdvertisedAddress() + ":" + pulsarServices[i].getListenPortHTTP().get();
+            lookupAddresses[i] = pulsarServices[i].getBrokerId();
             pulsarAdmins[i] = PulsarAdmin.builder().serviceHttpUrl(brokerUrls[i].toString()).build();
         }
 
@@ -410,7 +409,7 @@ public class LoadBalancerTest {
         double expectedMaxVariation = 10.0;
         for (int i = 0; i < BROKER_COUNT; i++) {
             long actualValue = 0;
-            String resourceId = "http://" + lookupAddresses[i];
+            String resourceId = lookupAddresses[i];
             if (namespaceOwner.containsKey(resourceId)) {
                 actualValue = namespaceOwner.get(resourceId);
             }
@@ -696,7 +695,7 @@ public class LoadBalancerTest {
                 }
             }
             // Make sure all brokers see the same leader
-            log.info("Old leader is : {}", oldLeader.getServiceUrl());
+            log.info("Old leader is : {}", oldLeader.getBrokerId());
             for (PulsarService pulsar : activePulsar) {
                 log.info("Current leader for {} is : {}", pulsar.getWebServiceAddress(), pulsar.getLeaderElectionService().getCurrentLeader());
                 assertEquals(pulsar.getLeaderElectionService().readCurrentLeader().join(), Optional.of(oldLeader));
@@ -706,7 +705,7 @@ public class LoadBalancerTest {
             leaderPulsar.close();
             loopUntilLeaderChangesForAllBroker(followerPulsar, oldLeader);
             LeaderBroker newLeader = followerPulsar.get(0).getLeaderElectionService().readCurrentLeader().join().get();
-            log.info("New leader is : {}", newLeader.getServiceUrl());
+            log.info("New leader is : {}", newLeader.getBrokerId());
             Assert.assertNotEquals(newLeader, oldLeader);
         }
     }
@@ -744,7 +743,7 @@ public class LoadBalancerTest {
         // set up policy that use this broker as secondary
         policyData = NamespaceIsolationData.builder()
                 .namespaces(Collections.singletonList("pulsar/use/secondary-ns.*"))
-                .primary(Collections.singletonList(pulsarServices[0].getWebServiceAddress()))
+                .primary(Collections.singletonList(pulsarServices[0].getAdvertisedAddress()))
                 .secondary(allExceptFirstBroker)
                 .autoFailoverPolicy(AutoFailoverPolicyData.builder()
                         .policyType(AutoFailoverPolicyType.min_available)
@@ -756,7 +755,7 @@ public class LoadBalancerTest {
         // set up policy that do not use this broker (neither primary nor secondary)
         policyData = NamespaceIsolationData.builder()
                 .namespaces(Collections.singletonList("pulsar/use/shared-ns.*"))
-                .primary(Collections.singletonList(pulsarServices[0].getWebServiceAddress()))
+                .primary(Collections.singletonList(pulsarServices[0].getAdvertisedAddress()))
                 .secondary(allExceptFirstBroker)
                 .autoFailoverPolicy(AutoFailoverPolicyData.builder()
                         .policyType(AutoFailoverPolicyType.min_available)

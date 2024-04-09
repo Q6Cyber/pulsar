@@ -38,6 +38,7 @@ import java.util.function.Function;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.io.IOUtils;
+import org.apache.pulsar.client.impl.auth.AuthenticationTls;
 import org.apache.pulsar.tests.integration.containers.BKContainer;
 import org.apache.pulsar.tests.integration.containers.BrokerContainer;
 import org.apache.pulsar.tests.integration.containers.CSContainer;
@@ -132,14 +133,16 @@ public class PulsarCluster {
         this.brokerContainers = Maps.newTreeMap();
         this.workerContainers = Maps.newTreeMap();
 
-        this.proxyContainer = new ProxyContainer(appendClusterName("pulsar-proxy"), ProxyContainer.NAME)
+        this.proxyContainer = new ProxyContainer(clusterName, appendClusterName(ProxyContainer.NAME), spec.enableTls)
                 .withNetwork(network)
                 .withNetworkAliases(appendClusterName("pulsar-proxy"))
                 .withEnv("zkServers", appendClusterName(ZKContainer.NAME))
                 .withEnv("zookeeperServers", appendClusterName(ZKContainer.NAME))
                 .withEnv("configurationStoreServers", CSContainer.NAME + ":" + CS_PORT)
-                .withEnv("clusterName", clusterName)
+                .withEnv("clusterName", clusterName);
                 // enable mTLS
+        if (spec.enableTls) {
+            proxyContainer
                 .withEnv("webServicePortTls", String.valueOf(BROKER_HTTPS_PORT))
                 .withEnv("servicePortTls", String.valueOf(BROKER_PORT_TLS))
                 .withEnv("forwardAuthorizationCredentials", "true")
@@ -147,7 +150,15 @@ public class PulsarCluster {
                 .withEnv("tlsAllowInsecureConnection", "false")
                 .withEnv("tlsCertificateFilePath", "/pulsar/certificate-authority/server-keys/proxy.cert.pem")
                 .withEnv("tlsKeyFilePath", "/pulsar/certificate-authority/server-keys/proxy.key-pk8.pem")
-                .withEnv("tlsTrustCertsFilePath", "/pulsar/certificate-authority/certs/ca.cert.pem");
+                .withEnv("tlsTrustCertsFilePath", "/pulsar/certificate-authority/certs/ca.cert.pem")
+                .withEnv("brokerClientAuthenticationPlugin", AuthenticationTls.class.getName())
+                .withEnv("brokerClientAuthenticationParameters", String.format("tlsCertFile:%s,tlsKeyFile:%s", "/pulsar/certificate-authority/client-keys/admin.cert.pem", "/pulsar/certificate-authority/client-keys/admin.key-pk8.pem"))
+                .withEnv("tlsEnabledWithBroker", "true")
+                .withEnv("brokerClientTrustCertsFilePath", "/pulsar/certificate-authority/certs/ca.cert.pem")
+                .withEnv("brokerClientCertificateFilePath", "/pulsar/certificate-authority/server-keys/proxy.cert.pem")
+                .withEnv("brokerClientKeyFilePath", "/pulsar/certificate-authority/server-keys/proxy.key-pk8.pem");
+
+        }
         if (spec.proxyEnvs != null) {
             spec.proxyEnvs.forEach(this.proxyContainer::withEnv);
         }
@@ -184,7 +195,7 @@ public class PulsarCluster {
         // create brokers
         brokerContainers.putAll(
             runNumContainers("broker", spec.numBrokers(), (name) -> {
-                BrokerContainer brokerContainer = new BrokerContainer(clusterName, appendClusterName(name))
+                BrokerContainer brokerContainer = new BrokerContainer(clusterName, appendClusterName(name), spec.enableTls)
                         .withNetwork(network)
                         .withNetworkAliases(appendClusterName(name))
                         .withEnv("zkServers", appendClusterName(ZKContainer.NAME))
@@ -195,16 +206,19 @@ public class PulsarCluster {
                         .withEnv("loadBalancerOverrideBrokerNicSpeedGbps", "1")
                         // used in s3 tests
                         .withEnv("AWS_ACCESS_KEY_ID", "accesskey").withEnv("AWS_SECRET_KEY", "secretkey")
-                        .withEnv("maxMessageSize", "" + spec.maxMessageSize)
+                        .withEnv("maxMessageSize", "" + spec.maxMessageSize);
+                    if (spec.enableTls) {
                         // enable mTLS
-                        .withEnv("webServicePortTls", String.valueOf(BROKER_HTTPS_PORT))
-                        .withEnv("brokerServicePortTls", String.valueOf(BROKER_PORT_TLS))
-                        .withEnv("authenticateOriginalAuthData", "true")
-                        .withEnv("tlsRequireTrustedClientCertOnConnect", "true")
-                        .withEnv("tlsAllowInsecureConnection", "false")
-                        .withEnv("tlsCertificateFilePath", "/pulsar/certificate-authority/server-keys/broker.cert.pem")
-                        .withEnv("tlsKeyFilePath", "/pulsar/certificate-authority/server-keys/broker.key-pk8.pem")
-                        .withEnv("tlsTrustCertsFilePath", "/pulsar/certificate-authority/certs/ca.cert.pem");
+                        brokerContainer
+                            .withEnv("webServicePortTls", String.valueOf(BROKER_HTTPS_PORT))
+                            .withEnv("brokerServicePortTls", String.valueOf(BROKER_PORT_TLS))
+                            .withEnv("authenticateOriginalAuthData", "true")
+                            .withEnv("tlsAllowInsecureConnection", "false")
+                            .withEnv("tlsRequireTrustedClientCertOnConnect", "true")
+                            .withEnv("tlsTrustCertsFilePath", "/pulsar/certificate-authority/certs/ca.cert.pem")
+                            .withEnv("tlsCertificateFilePath", "/pulsar/certificate-authority/server-keys/broker.cert.pem")
+                            .withEnv("tlsKeyFilePath", "/pulsar/certificate-authority/server-keys/broker.key-pk8.pem");
+                    }
                     if (spec.queryLastMessage) {
                         brokerContainer.withEnv("bookkeeperExplicitLacIntervalInMills", "10");
                         brokerContainer.withEnv("bookkeeperUseV2WireProtocol", "false");
@@ -511,37 +525,18 @@ public class PulsarCluster {
     }
 
     private void startFunctionWorkersWithProcessContainerFactory(String suffix, int numFunctionWorkers) {
-        String serviceUrl = "pulsar://pulsar-broker-0:" + PulsarContainer.BROKER_PORT;
-        String httpServiceUrl = "http://pulsar-broker-0:" + PulsarContainer.BROKER_HTTP_PORT;
         workerContainers.putAll(runNumContainers(
             "functions-worker-process-" + suffix,
             numFunctionWorkers,
-            (name) -> new WorkerContainer(clusterName, name)
-                .withNetwork(network)
-                .withNetworkAliases(name)
-                // worker settings
-                .withEnv("PF_workerId", name)
-                .withEnv("PF_workerHostname", name)
-                .withEnv("PF_workerPort", "" + PulsarContainer.BROKER_HTTP_PORT)
-                .withEnv("PF_pulsarFunctionsCluster", clusterName)
-                .withEnv("PF_pulsarServiceUrl", serviceUrl)
-                .withEnv("PF_pulsarWebServiceUrl", httpServiceUrl)
-                // script
-                .withEnv("clusterName", clusterName)
-                .withEnv("zookeeperServers", ZKContainer.NAME)
-                // bookkeeper tools
-                .withEnv("zkServers", ZKContainer.NAME)
+            (name) -> createWorkerContainer(name)
         ));
         this.startWorkers();
     }
 
-    private void startFunctionWorkersWithThreadContainerFactory(String suffix, int numFunctionWorkers) {
+    private WorkerContainer createWorkerContainer(String name) {
         String serviceUrl = "pulsar://pulsar-broker-0:" + PulsarContainer.BROKER_PORT;
         String httpServiceUrl = "http://pulsar-broker-0:" + PulsarContainer.BROKER_HTTP_PORT;
-        workerContainers.putAll(runNumContainers(
-            "functions-worker-thread-" + suffix,
-            numFunctionWorkers,
-            (name) -> new WorkerContainer(clusterName, name)
+        return new WorkerContainer(clusterName, name)
                 .withNetwork(network)
                 .withNetworkAliases(name)
                 // worker settings
@@ -551,13 +546,21 @@ public class PulsarCluster {
                 .withEnv("PF_pulsarFunctionsCluster", clusterName)
                 .withEnv("PF_pulsarServiceUrl", serviceUrl)
                 .withEnv("PF_pulsarWebServiceUrl", httpServiceUrl)
-                .withEnv("PF_functionRuntimeFactoryClassName", "org.apache.pulsar.functions.runtime.thread.ThreadRuntimeFactory")
-                .withEnv("PF_functionRuntimeFactoryConfigs_threadGroupName", "pf-container-group")
                 // script
                 .withEnv("clusterName", clusterName)
                 .withEnv("zookeeperServers", ZKContainer.NAME)
                 // bookkeeper tools
-                .withEnv("zkServers", ZKContainer.NAME)
+                .withEnv("zkServers", ZKContainer.NAME);
+    }
+
+    private void startFunctionWorkersWithThreadContainerFactory(String suffix, int numFunctionWorkers) {
+        workerContainers.putAll(runNumContainers(
+                "functions-worker-thread-" + suffix,
+                numFunctionWorkers,
+                (name) -> createWorkerContainer(name)
+                        .withEnv("PF_functionRuntimeFactoryClassName",
+                                "org.apache.pulsar.functions.runtime.thread.ThreadRuntimeFactory")
+                        .withEnv("PF_functionRuntimeFactoryConfigs_threadGroupName", "pf-container-group")
         ));
         this.startWorkers();
     }

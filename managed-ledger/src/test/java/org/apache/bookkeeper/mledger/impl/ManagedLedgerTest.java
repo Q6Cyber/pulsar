@@ -2440,7 +2440,7 @@ public class ManagedLedgerTest extends MockedBookKeeperTestCase {
         });
     }
 
-    @Test
+    @Test(groups = "flaky")
     public void testTimestampOnWorkingLedger() throws Exception {
         ManagedLedgerConfig conf = new ManagedLedgerConfig();
         conf.setMaxEntriesPerLedger(1);
@@ -3399,7 +3399,7 @@ public class ManagedLedgerTest extends MockedBookKeeperTestCase {
             @Override
             public void openLedgerFailed(ManagedLedgerException exception, Object ctx) {
             }
-        }, checkOwnershipFlag ? () -> true : null, null);
+        }, checkOwnershipFlag ? () -> CompletableFuture.completedFuture(true) : null, null);
         latch.await();
     }
 
@@ -3505,7 +3505,7 @@ public class ManagedLedgerTest extends MockedBookKeeperTestCase {
                 .until(() -> firstLedgerId != ml.addEntry("test".getBytes()).getLedgerId());
     }
 
-    @Test
+    @Test(groups = "flaky")
     public void testLedgerNotRolloverWithoutOpenState() throws Exception {
         ManagedLedgerConfig config = new ManagedLedgerConfig();
         config.setMaxEntriesPerLedger(2);

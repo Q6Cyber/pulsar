@@ -295,7 +295,8 @@ public class PersistentTopicTest extends BrokerTestBase {
 
         assertFalse(pulsar.getBrokerService().getTopics().containsKey(topicName));
         pulsar.getBrokerService().getTopicIfExists(topicName).get();
-        assertTrue(pulsar.getBrokerService().getTopics().containsKey(topicName));
+        // The map topics should only contain partitions, does not contain partitioned topic.
+        assertFalse(pulsar.getBrokerService().getTopics().containsKey(topicName));
 
         // ref of partitioned-topic name should be empty
         assertFalse(pulsar.getBrokerService().getTopicReference(topicName).isPresent());
@@ -633,5 +634,31 @@ public class PersistentTopicTest extends BrokerTestBase {
         persistentTopic.onUpdate(policies);
         assertEquals(persistentTopic.getManagedLedger().getConfig().getRetentionSizeInMB(), 1L);
         assertEquals(persistentTopic.getManagedLedger().getConfig().getRetentionTimeMillis(), TimeUnit.MINUTES.toMillis(1));
+    }
+
+    @Test
+    public void testDynamicConfigurationAutoSkipNonRecoverableData() throws Exception {
+        pulsar.getConfiguration().setAutoSkipNonRecoverableData(false);
+        final String topicName = "persistent://prop/ns-abc/testAutoSkipNonRecoverableData";
+        final String subName = "test_sub";
+
+        Consumer<byte[]> subscribe = pulsarClient.newConsumer().topic(topicName).subscriptionName(subName).subscribe();
+        PersistentTopic persistentTopic =
+                (PersistentTopic) pulsar.getBrokerService().getTopic(topicName, false).join().get();
+        PersistentSubscription subscription = persistentTopic.getSubscription(subName);
+
+        assertFalse(persistentTopic.ledger.getConfig().isAutoSkipNonRecoverableData());
+        assertFalse(subscription.getExpiryMonitor().isAutoSkipNonRecoverableData());
+
+        String key = "autoSkipNonRecoverableData";
+        admin.brokers().updateDynamicConfiguration(key, "true");
+        Awaitility.await()
+                .untilAsserted(() -> assertEquals(admin.brokers().getAllDynamicConfigurations().get(key), "true"));
+
+        assertTrue(persistentTopic.ledger.getConfig().isAutoSkipNonRecoverableData());
+        assertTrue(subscription.getExpiryMonitor().isAutoSkipNonRecoverableData());
+
+        subscribe.close();
+        admin.topics().delete(topicName);
     }
 }

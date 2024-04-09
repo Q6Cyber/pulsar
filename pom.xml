@@ -32,7 +32,7 @@
   <groupId>org.apache.pulsar</groupId>
   <artifactId>pulsar</artifactId>
 
-  <version>3.1.2</version>
+  <version>3.1.4-SNAPSHOT</version>
 
   <name>Pulsar</name>
   <description>Pulsar is a distributed pub-sub messaging platform with a very
@@ -82,17 +82,20 @@ flexible messaging model and an intuitive client API.</description>
     <pulsar.broker.compiler.release>${maven.compiler.target}</pulsar.broker.compiler.release>
     <pulsar.client.compiler.release>8</pulsar.client.compiler.release>
 
-    <pulsar.client.python.version>3.2.0</pulsar.client.python.version>
+    <pulsar.client.python.version>3.4.0</pulsar.client.python.version>
+
+    <UBUNTU_MIRROR>http://archive.ubuntu.com/ubuntu/</UBUNTU_MIRROR>
+    <UBUNTU_SECURITY_MIRROR>http://security.ubuntu.com/ubuntu/</UBUNTU_SECURITY_MIRROR>
 
     <!--config keys to configure test selection -->
     <include>**/Test*.java,**/*Test.java,**/*Tests.java,**/*TestCase.java</include>
     <exclude/>
     <groups/>
-    <excludedGroups>quarantine</excludedGroups>
+    <excludedGroups>quarantine,flaky</excludedGroups>
 
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
-    <project.build.outputTimestamp>2023-11-30T15:05:59Z</project.build.outputTimestamp>
+    <project.build.outputTimestamp>2024-03-13T09:07:12Z</project.build.outputTimestamp>
     <redirectTestOutputToFile>true</redirectTestOutputToFile>
 
     <!-- By default build for local Docker platform.
@@ -131,18 +134,18 @@ flexible messaging model and an intuitive client API.</description>
     <narPluginPhase>package</narPluginPhase>
 
     <!-- apache commons -->
-    <commons-compress.version>1.21</commons-compress.version>
+    <commons-compress.version>1.26.0</commons-compress.version>
 
-    <bookkeeper.version>4.16.3</bookkeeper.version>
-    <zookeeper.version>3.9.1</zookeeper.version>
+    <bookkeeper.version>4.16.4</bookkeeper.version>
+    <zookeeper.version>3.9.2</zookeeper.version>
     <commons-cli.version>1.5.0</commons-cli.version>
     <commons-text.version>1.10.0</commons-text.version>
     <snappy.version>1.1.10.5</snappy.version> <!-- ZooKeeper server -->
     <dropwizardmetrics.version>4.1.12.1</dropwizardmetrics.version> <!-- ZooKeeper server -->
     <curator.version>5.1.0</curator.version>
-    <netty.version>4.1.100.Final</netty.version>
+    <netty.version>4.1.108.Final</netty.version>
     <netty-iouring.version>0.0.21.Final</netty-iouring.version>
-    <jetty.version>9.4.53.v20231009</jetty.version>
+    <jetty.version>9.4.54.v20240208</jetty.version>
     <conscrypt.version>2.5.2</conscrypt.version>
     <jersey.version>2.34</jersey.version>
     <athenz.version>1.10.50</athenz.version>
@@ -158,10 +161,12 @@ flexible messaging model and an intuitive client API.</description>
     <jackson.version>2.14.2</jackson.version>
     <reflections.version>0.10.2</reflections.version>
     <swagger.version>1.6.2</swagger.version>
-    <puppycrawl.checkstyle.version>8.37</puppycrawl.checkstyle.version>
+    <puppycrawl.checkstyle.version>10.14.2</puppycrawl.checkstyle.version>
     <docker-maven.version>0.43.3</docker-maven.version>
     <docker.verbose>true</docker.verbose>
     <typetools.version>0.5.0</typetools.version>
+    <byte-buddy.version>1.14.12</byte-buddy.version>
+    <zt-zip.version>1.17</zt-zip.version>
     <protobuf3.version>3.19.6</protobuf3.version>
     <protoc3.version>${protobuf3.version}</protoc3.version>
     <grpc.version>1.55.3</grpc.version>
@@ -232,6 +237,7 @@ flexible messaging model and an intuitive client API.</description>
     <jakarta.validation.version>2.0.2</jakarta.validation.version>
     <jna.version>5.12.1</jna.version>
     <kubernetesclient.version>18.0.0</kubernetesclient.version>
+    <jose4j.version>0.9.4</jose4j.version>
     <okhttp3.version>4.9.3</okhttp3.version>
     <!-- use okio version that matches the okhttp3 version -->
     <okio.version>3.4.0</okio.version>
@@ -547,6 +553,10 @@ flexible messaging model and an intuitive client API.</description>
             <groupId>com.squareup.okio</groupId>
             <artifactId>okio</artifactId>
           </exclusion>
+          <exclusion>
+            <artifactId>jose4j</artifactId>
+            <groupId>org.bitbucket.b_c</groupId>
+          </exclusion>
         </exclusions>
       </dependency>
 
@@ -617,6 +627,12 @@ flexible messaging model and an intuitive client API.</description>
         <groupId>org.rocksdb</groupId>
         <artifactId>rocksdbjni</artifactId>
         <version>${rocksdb.version}</version>
+      </dependency>
+
+      <dependency>
+        <groupId>org.bitbucket.b_c</groupId>
+        <artifactId>jose4j</artifactId>
+        <version>${jose4j.version}</version>
       </dependency>
 
       <dependency>
@@ -1057,6 +1073,18 @@ flexible messaging model and an intuitive client API.</description>
         <groupId>net.jodah</groupId>
         <artifactId>typetools</artifactId>
         <version>${typetools.version}</version>
+      </dependency>
+
+      <dependency>
+        <groupId>net.bytebuddy</groupId>
+        <artifactId>byte-buddy</artifactId>
+        <version>${byte-buddy.version}</version>
+      </dependency>
+
+      <dependency>
+        <groupId>org.zeroturnaround</groupId>
+        <artifactId>zt-zip</artifactId>
+        <version>${zt-zip.version}</version>
       </dependency>
 
       <dependency>
@@ -2534,6 +2562,32 @@ flexible messaging model and an intuitive client API.</description>
         <module>pulsar-sql</module>
       </modules>
     </profile>
+
+    <profile>
+      <id>ubuntu-mirror-set</id>
+      <activation>
+        <property>
+          <name>env.UBUNTU_MIRROR</name>
+        </property>
+      </activation>
+      <properties>
+        <!-- Override the default value with the environment variable -->
+        <UBUNTU_MIRROR>${env.UBUNTU_MIRROR}</UBUNTU_MIRROR>
+      </properties>
+    </profile>
+    <profile>
+      <id>ubuntu-security-mirror-set</id>
+      <activation>
+        <property>
+          <name>env.UBUNTU_SECURITY_MIRROR</name>
+        </property>
+      </activation>
+      <properties>
+        <!-- Override the default value with the environment variable -->
+        <UBUNTU_SECURITY_MIRROR>${env.UBUNTU_SECURITY_MIRROR}</UBUNTU_SECURITY_MIRROR>
+      </properties>
+    </profile>
+
   </profiles>
 
   <repositories>

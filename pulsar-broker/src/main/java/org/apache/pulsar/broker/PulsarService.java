@@ -271,6 +271,7 @@ public class PulsarService implements AutoCloseable, ShutdownService {
 
     private TransactionPendingAckStoreProvider transactionPendingAckStoreProvider;
     private final ExecutorProvider transactionExecutorProvider;
+    private String brokerId;
 
     public enum State {
         Init, Started, Closing, Closed
@@ -303,6 +304,7 @@ public class PulsarService implements AutoCloseable, ShutdownService {
         // Validate correctness of configuration
         PulsarConfigurationLoader.isComplete(config);
         TransactionBatchedWriteValidator.validate(config);
+        this.config = config;
 
         // validate `advertisedAddress`, `advertisedListeners`, `internalListenerName`
         this.advertisedListeners = MultipleListenerValidator.validateAndAnalysisAdvertisedListener(config);
@@ -313,7 +315,6 @@ public class PulsarService implements AutoCloseable, ShutdownService {
         // use `internalListenerName` listener as `advertisedAddress`
         this.bindAddress = ServiceConfigurationUtils.getDefaultOrConfiguredAddress(config.getBindAddress());
         this.brokerVersion = PulsarVersion.getVersion();
-        this.config = config;
         this.processTerminator = processTerminator;
         this.loadManagerExecutor = Executors
                 .newSingleThreadScheduledExecutor(new ExecutorProvider.ExtendedThreadFactory("pulsar-load-manager"));
@@ -378,7 +379,7 @@ public class PulsarService implements AutoCloseable, ShutdownService {
     }
 
     private void closeLeaderElectionService() throws Exception {
-        if (ExtensibleLoadManagerImpl.isLoadManagerExtensionEnabled(config)) {
+        if (ExtensibleLoadManagerImpl.isLoadManagerExtensionEnabled(this)) {
             ExtensibleLoadManagerImpl.get(loadManager.get()).getLeaderElectionService().close();
         } else {
             if (this.leaderElectionService != null) {
@@ -828,6 +829,12 @@ public class PulsarService implements AutoCloseable, ShutdownService {
             this.brokerServiceUrl = brokerUrl(config);
             this.brokerServiceUrlTls = brokerUrlTls(config);
 
+            // the broker id is used in the load manager to identify the broker
+            // it should not be used for making connections to the broker
+            this.brokerId =
+                    String.format("%s:%s", advertisedAddress, config.getWebServicePort()
+                            .or(config::getWebServicePortTls).orElseThrow());
+
             if (this.compactionServiceFactory == null) {
                 this.compactionServiceFactory = loadCompactionServiceFactory();
             }
@@ -1094,7 +1101,7 @@ public class PulsarService implements AutoCloseable, ShutdownService {
     }
 
     private void handleDeleteCluster(Notification notification) {
-        if (ClusterResources.pathRepresentsClusterName(notification.getPath())
+        if (isRunning() && ClusterResources.pathRepresentsClusterName(notification.getPath())
                 && notification.getType() == NotificationType.Deleted) {
             final String clusterName = ClusterResources.clusterNameFromPath(notification.getPath());
             getBrokerService().closeAndRemoveReplicationClient(clusterName);
@@ -1128,11 +1135,12 @@ public class PulsarService implements AutoCloseable, ShutdownService {
     }
 
     protected void startLeaderElectionService() {
-        if (ExtensibleLoadManagerImpl.isLoadManagerExtensionEnabled(config)) {
+        if (ExtensibleLoadManagerImpl.isLoadManagerExtensionEnabled(this)) {
             LOG.info("The load manager extension is enabled. Skipping PulsarService LeaderElectionService.");
             return;
         }
-        this.leaderElectionService = new LeaderElectionService(coordinationService, getSafeWebServiceAddress(),
+        this.leaderElectionService =
+                new LeaderElectionService(coordinationService, getBrokerId(), getSafeWebServiceAddress(),
                 state -> {
                     if (state == LeaderElectionState.Leading) {
                         LOG.info("This broker was elected leader");
@@ -1180,7 +1188,7 @@ public class PulsarService implements AutoCloseable, ShutdownService {
     protected void acquireSLANamespace() {
         try {
             // Namespace not created hence no need to unload it
-            NamespaceName nsName = NamespaceService.getSLAMonitorNamespace(getLookupServiceAddress(), config);
+            NamespaceName nsName = NamespaceService.getSLAMonitorNamespace(getBrokerId(), config);
             if (!this.pulsarResources.getNamespaceResources().namespaceExists(nsName)) {
                 LOG.info("SLA Namespace = {} doesn't exist.", nsName);
                 return;
@@ -1242,7 +1250,7 @@ public class PulsarService implements AutoCloseable, ShutdownService {
         LOG.info("Starting load management service ...");
         this.loadManager.get().start();
 
-        if (config.isLoadBalancerEnabled() && !ExtensibleLoadManagerImpl.isLoadManagerExtensionEnabled(config)) {
+        if (config.isLoadBalancerEnabled() && !ExtensibleLoadManagerImpl.isLoadManagerExtensionEnabled(this)) {
             LOG.info("Starting load balancer");
             if (this.loadReportTask == null) {
                 long loadReportMinInterval = config.getLoadBalancerReportUpdateMinIntervalMillis();
@@ -1335,7 +1343,7 @@ public class PulsarService implements AutoCloseable, ShutdownService {
      * @return a reference of the current <code>LeaderElectionService</code> instance.
      */
     public LeaderElectionService getLeaderElectionService() {
-        if (ExtensibleLoadManagerImpl.isLoadManagerExtensionEnabled(config)) {
+        if (ExtensibleLoadManagerImpl.isLoadManagerExtensionEnabled(this)) {
             return ExtensibleLoadManagerImpl.get(loadManager.get()).getLeaderElectionService();
         } else {
             return this.leaderElectionService;
@@ -1733,18 +1741,24 @@ public class PulsarService implements AutoCloseable, ShutdownService {
     }
 
     public String getSafeWebServiceAddress() {
-        return webServiceAddress != null ? webServiceAddress : webServiceAddressTls;
+        return webServiceAddressTls != null ? webServiceAddressTls : webServiceAddress;
     }
 
     @Deprecated
     public String getSafeBrokerServiceUrl() {
-        return brokerServiceUrl != null ? brokerServiceUrl : brokerServiceUrlTls;
+        return brokerServiceUrlTls != null ? brokerServiceUrlTls : brokerServiceUrl;
     }
 
-    public String getLookupServiceAddress() {
-        return String.format("%s:%s", advertisedAddress, config.getWebServicePort().isPresent()
-                ? config.getWebServicePort().get()
-                : config.getWebServicePortTls().orElseThrow());
+    /**
+     * Return the broker id. The broker id is used in the load manager to uniquely identify the broker at runtime.
+     * It should not be used for making connections to the broker. The broker id is available after {@link #start()}
+     * has been called.
+     *
+     * @return broker id
+     */
+    public String getBrokerId() {
+        return Objects.requireNonNull(brokerId,
+                "brokerId is not initialized before start has been called");
     }
 
     public TopicPoliciesService getTopicPoliciesService() {

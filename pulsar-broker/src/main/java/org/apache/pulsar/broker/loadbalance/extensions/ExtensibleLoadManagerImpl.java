@@ -21,6 +21,7 @@ package org.apache.pulsar.broker.loadbalance.extensions;
 import static java.lang.String.format;
 import static org.apache.pulsar.broker.loadbalance.extensions.ExtensibleLoadManagerImpl.Role.Follower;
 import static org.apache.pulsar.broker.loadbalance.extensions.ExtensibleLoadManagerImpl.Role.Leader;
+import static org.apache.pulsar.broker.loadbalance.extensions.channel.ServiceUnitStateChannelImpl.TOPIC;
 import static org.apache.pulsar.broker.loadbalance.extensions.models.SplitDecision.Label.Success;
 import static org.apache.pulsar.broker.loadbalance.extensions.models.SplitDecision.Reason.Admin;
 import static org.apache.pulsar.broker.loadbalance.impl.LoadManagerShared.getNamespaceBundle;
@@ -117,6 +118,8 @@ public class ExtensibleLoadManagerImpl implements ExtensibleLoadManager {
 
     private static final long MONITOR_INTERVAL_IN_MILLIS = 120_000;
 
+    public static final long COMPACTION_THRESHOLD = 5 * 1024 * 1024;
+
     private static final String ELECTION_ROOT = "/loadbalance/extension/leader";
 
     private PulsarService pulsar;
@@ -172,6 +175,8 @@ public class ExtensibleLoadManagerImpl implements ExtensibleLoadManager {
     private SplitManager splitManager;
 
     private volatile boolean started = false;
+
+    private boolean configuredSystemTopics = false;
 
     private final AssignCounter assignCounter = new AssignCounter();
     @Getter
@@ -258,8 +263,8 @@ public class ExtensibleLoadManagerImpl implements ExtensibleLoadManager {
         this.brokerSelectionStrategy = new LeastResourceUsageWithWeight();
     }
 
-    public static boolean isLoadManagerExtensionEnabled(ServiceConfiguration conf) {
-        return ExtensibleLoadManagerImpl.class.getName().equals(conf.getLoadManagerClassName());
+    public static boolean isLoadManagerExtensionEnabled(PulsarService pulsar) {
+        return pulsar.getLoadManager().get() instanceof ExtensibleLoadManagerWrapper;
     }
 
     public static ExtensibleLoadManagerImpl get(LoadManager loadManager) {
@@ -291,6 +296,27 @@ public class ExtensibleLoadManagerImpl implements ExtensibleLoadManager {
         createSystemTopic(pulsar, TOP_BUNDLES_LOAD_DATA_STORE_TOPIC);
     }
 
+    private static boolean configureSystemTopics(PulsarService pulsar) {
+        try {
+            if (ExtensibleLoadManagerImpl.isLoadManagerExtensionEnabled(pulsar)
+                    && (pulsar.getConfiguration().isSystemTopicEnabled()
+                    && pulsar.getConfiguration().isTopicLevelPoliciesEnabled())) {
+                Long threshold = pulsar.getAdminClient().topicPolicies().getCompactionThreshold(TOPIC);
+                if (threshold == null || COMPACTION_THRESHOLD != threshold.longValue()) {
+                    pulsar.getAdminClient().topicPolicies().setCompactionThreshold(TOPIC, COMPACTION_THRESHOLD);
+                    log.info("Set compaction threshold: {} bytes for system topic {}.", COMPACTION_THRESHOLD, TOPIC);
+                }
+            } else {
+                log.warn("System topic or topic level policies is disabled. "
+                        + "{} compaction threshold follows the broker or namespace policies.", TOPIC);
+            }
+            return true;
+        } catch (Exception e) {
+            log.error("Failed to set compaction threshold for system topic:{}", TOPIC, e);
+        }
+        return false;
+    }
+
     @Override
     public void start() throws PulsarServerException {
         if (this.started) {
@@ -299,7 +325,8 @@ public class ExtensibleLoadManagerImpl implements ExtensibleLoadManager {
         try {
             this.brokerRegistry = new BrokerRegistryImpl(pulsar);
             this.leaderElectionService = new LeaderElectionService(
-                    pulsar.getCoordinationService(), pulsar.getSafeWebServiceAddress(), ELECTION_ROOT,
+                    pulsar.getCoordinationService(), pulsar.getBrokerId(),
+                    pulsar.getSafeWebServiceAddress(), ELECTION_ROOT,
                     state -> {
                         pulsar.getLoadManagerExecutor().execute(() -> {
                             if (state == LeaderElectionState.Leading) {
@@ -328,9 +355,9 @@ public class ExtensibleLoadManagerImpl implements ExtensibleLoadManager {
 
             try {
                 this.brokerLoadDataStore = LoadDataStoreFactory
-                        .create(pulsar.getClient(), BROKER_LOAD_DATA_STORE_TOPIC, BrokerLoadData.class);
+                        .create(pulsar, BROKER_LOAD_DATA_STORE_TOPIC, BrokerLoadData.class);
                 this.topBundlesLoadDataStore = LoadDataStoreFactory
-                        .create(pulsar.getClient(), TOP_BUNDLES_LOAD_DATA_STORE_TOPIC, TopBundlesLoadData.class);
+                        .create(pulsar, TOP_BUNDLES_LOAD_DATA_STORE_TOPIC, TopBundlesLoadData.class);
             } catch (LoadDataStoreException e) {
                 throw new PulsarServerException(e);
             }
@@ -388,7 +415,10 @@ public class ExtensibleLoadManagerImpl implements ExtensibleLoadManager {
             this.splitScheduler.start();
             this.initWaiter.countDown();
             this.started = true;
+            log.info("Started load manager.");
         } catch (Exception ex) {
+            log.error("Failed to start the extensible load balance and close broker registry {}.",
+                    this.brokerRegistry, ex);
             if (this.brokerRegistry != null) {
                 brokerRegistry.close();
             }
@@ -520,7 +550,7 @@ public class ExtensibleLoadManagerImpl implements ExtensibleLoadManager {
                     if (ex != null) {
                         assignCounter.incrementFailure();
                     }
-                    lookupRequests.remove(key, newFutureCreated.getValue());
+                    lookupRequests.remove(key);
                 });
             }
         }
@@ -733,18 +763,23 @@ public class ExtensibleLoadManagerImpl implements ExtensibleLoadManager {
     }
 
     public static boolean isInternalTopic(String topic) {
-        return topic.startsWith(ServiceUnitStateChannelImpl.TOPIC)
+        return topic.startsWith(TOPIC)
                 || topic.startsWith(BROKER_LOAD_DATA_STORE_TOPIC)
                 || topic.startsWith(TOP_BUNDLES_LOAD_DATA_STORE_TOPIC);
     }
 
     @VisibleForTesting
-    void playLeader() {
+    synchronized void playLeader() {
         log.info("This broker:{} is setting the role from {} to {}",
-                pulsar.getLookupServiceAddress(), role, Leader);
+                pulsar.getBrokerId(), role, Leader);
         int retry = 0;
+        boolean becameFollower = false;
         while (!Thread.currentThread().isInterrupted()) {
             try {
+                if (!serviceUnitStateChannel.isChannelOwner()) {
+                    becameFollower = true;
+                    break;
+                }
                 initWaiter.await();
                 // Confirm the system topics have been created or create them if they do not exist.
                 // If the leader has changed, the new leader need to reset
@@ -757,8 +792,8 @@ public class ExtensibleLoadManagerImpl implements ExtensibleLoadManager {
                 serviceUnitStateChannel.scheduleOwnershipMonitor();
                 break;
             } catch (Throwable e) {
-                log.error("The broker:{} failed to set the role. Retrying {} th ...",
-                        pulsar.getLookupServiceAddress(), ++retry, e);
+                log.warn("The broker:{} failed to set the role. Retrying {} th ...",
+                        pulsar.getBrokerId(), ++retry, e);
                 try {
                     Thread.sleep(Math.min(retry * 10, MAX_ROLE_CHANGE_RETRY_DELAY_IN_MILLIS));
                 } catch (InterruptedException ex) {
@@ -768,8 +803,15 @@ public class ExtensibleLoadManagerImpl implements ExtensibleLoadManager {
                 }
             }
         }
+
+        if (becameFollower) {
+            log.warn("The broker:{} became follower while initializing leader role.", pulsar.getBrokerId());
+            playFollower();
+            return;
+        }
+
         role = Leader;
-        log.info("This broker:{} plays the leader now.", pulsar.getLookupServiceAddress());
+        log.info("This broker:{} plays the leader now.", pulsar.getBrokerId());
 
         // flush the load data when the leader is elected.
         brokerLoadDataReporter.reportAsync(true);
@@ -777,12 +819,17 @@ public class ExtensibleLoadManagerImpl implements ExtensibleLoadManager {
     }
 
     @VisibleForTesting
-    void playFollower() {
+    synchronized void playFollower() {
         log.info("This broker:{} is setting the role from {} to {}",
-                pulsar.getLookupServiceAddress(), role, Follower);
+                pulsar.getBrokerId(), role, Follower);
         int retry = 0;
+        boolean becameLeader = false;
         while (!Thread.currentThread().isInterrupted()) {
             try {
+                if (serviceUnitStateChannel.isChannelOwner()) {
+                    becameLeader = true;
+                    break;
+                }
                 initWaiter.await();
                 unloadScheduler.close();
                 serviceUnitStateChannel.cancelOwnershipMonitor();
@@ -791,8 +838,8 @@ public class ExtensibleLoadManagerImpl implements ExtensibleLoadManager {
                 topBundlesLoadDataStore.startProducer();
                 break;
             } catch (Throwable e) {
-                log.error("The broker:{} failed to set the role. Retrying {} th ...",
-                        pulsar.getLookupServiceAddress(), ++retry, e);
+                log.warn("The broker:{} failed to set the role. Retrying {} th ...",
+                        pulsar.getBrokerId(), ++retry, e);
                 try {
                     Thread.sleep(Math.min(retry * 10, MAX_ROLE_CHANGE_RETRY_DELAY_IN_MILLIS));
                 } catch (InterruptedException ex) {
@@ -802,8 +849,15 @@ public class ExtensibleLoadManagerImpl implements ExtensibleLoadManager {
                 }
             }
         }
+
+        if (becameLeader) {
+            log.warn("This broker:{} became leader while initializing follower role.", pulsar.getBrokerId());
+            playLeader();
+            return;
+        }
+
         role = Follower;
-        log.info("This broker:{} plays a follower now.", pulsar.getLookupServiceAddress());
+        log.info("This broker:{} plays a follower now.", pulsar.getBrokerId());
 
         // flush the load data when the leader is elected.
         brokerLoadDataReporter.reportAsync(true);
@@ -831,7 +885,9 @@ public class ExtensibleLoadManagerImpl implements ExtensibleLoadManager {
         return metricsCollection;
     }
 
-    private void monitor() {
+
+    @VisibleForTesting
+    protected void monitor() {
         try {
             initWaiter.await();
 
@@ -839,6 +895,11 @@ public class ExtensibleLoadManagerImpl implements ExtensibleLoadManager {
             // Periodically check the role in case ZK watcher fails.
             var isChannelOwner = serviceUnitStateChannel.isChannelOwner();
             if (isChannelOwner) {
+                // System topic config might fail due to the race condition
+                // with topic policy init(Topic policies cache have not init).
+                if (!configuredSystemTopics) {
+                    configuredSystemTopics = configureSystemTopics(pulsar);
+                }
                 if (role != Leader) {
                     log.warn("Current role:{} does not match with the channel ownership:{}. "
                             + "Playing the leader role.", role, isChannelOwner);
