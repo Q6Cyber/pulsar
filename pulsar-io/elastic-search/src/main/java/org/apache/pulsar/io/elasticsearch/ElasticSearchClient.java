@@ -32,11 +32,12 @@ import java.util.concurrent.atomic.AtomicReference;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.pulsar.client.api.schema.GenericObject;
+import org.apache.pulsar.functions.api.BaseContext;
 import org.apache.pulsar.functions.api.Record;
-import org.apache.pulsar.io.core.SinkContext;
 import org.apache.pulsar.io.elasticsearch.client.BulkProcessor;
 import org.apache.pulsar.io.elasticsearch.client.RestClient;
 import org.apache.pulsar.io.elasticsearch.client.RestClientFactory;
+import org.apache.pulsar.io.elasticsearch.client.SlicedSearchProvider;
 
 @Slf4j
 public class ElasticSearchClient implements AutoCloseable {
@@ -62,11 +63,10 @@ public class ElasticSearchClient implements AutoCloseable {
         Open, Failed, Closed
     }
 
-    final SinkContext sinkContext;
-
-    public ElasticSearchClient(ElasticSearchConfig elasticSearchConfig, SinkContext sinkContext) {
+    final BaseContext context;
+    public ElasticSearchClient(ElasticSearchConfig elasticSearchConfig, BaseContext context) {
         this.config = elasticSearchConfig;
-        this.sinkContext = sinkContext;
+        this.context = context;
         if (this.config.getIndexName() != null) {
             this.indexNameFormatter = new IndexNameFormatter(this.config.getIndexName());
         } else {
@@ -108,7 +108,7 @@ public class ElasticSearchClient implements AutoCloseable {
 
     void failed(Exception e) {
         if (state.compareAndSet(State.Open, State.Failed)) {
-            sinkContext.fatal(e);
+            context.fatal(e);
         }
     }
 
@@ -261,6 +261,9 @@ public class ElasticSearchClient implements AutoCloseable {
             client = null;
         }
         state.compareAndSet(State.Open, State.Closed);
+    }
+    public SlicedSearchProvider getSlicedSearchProvider() {
+        return client.getSlicedSearchProvider();
     }
 
     @VisibleForTesting

@@ -24,6 +24,7 @@ import java.util.Map;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.http.client.methods.HttpGet;
+import org.apache.pulsar.io.elasticsearch.ElasticSearchBatchSourceConfig;
 import org.apache.pulsar.io.elasticsearch.ElasticSearchConfig;
 import org.apache.pulsar.io.elasticsearch.client.elastic.ElasticSearchJavaRestClient;
 import org.apache.pulsar.io.elasticsearch.client.opensearch.OpenSearchHighLevelRestClient;
@@ -51,7 +52,12 @@ public class RestClientFactory {
                 config.getCompatibilityMode());
         try {
             final Map<String, Object> jsonResponse = requestInfo(config);
-            final boolean useOpenSearchHighLevelClient = useOpenSearchHighLevelClient(jsonResponse);
+            ElasticSearchVersion versionInfo = getEsClusterVersion(jsonResponse);
+            log.info("Cluster version info: {}", versionInfo);
+            if (config instanceof ElasticSearchBatchSourceConfig) {
+                validateBatchSourceConfig(versionInfo, (ElasticSearchBatchSourceConfig) config);
+            }
+            final boolean useOpenSearchHighLevelClient = useOpenSearchHighLevelClient(versionInfo);
             log.info("useOpenSearchHighLevelClient={}, got info response: {}", useOpenSearchHighLevelClient,
                     jsonResponse);
             if (useOpenSearchHighLevelClient) {
@@ -70,34 +76,74 @@ public class RestClientFactory {
                      new OpenSearchHighLevelRestClient(config, null)) {
             final Response response = openSearchHighLevelRestClient.getClient().getLowLevelClient()
                     .performRequest(new Request(HttpGet.METHOD_NAME, "/"));
-
             return (Map<String, Object>) MAPPER.readValue(response.getEntity().getContent(), Map.class);
         }
     }
 
-    private static boolean useOpenSearchHighLevelClient(Map<String, Object> jsonResponse) {
+    private static ElasticSearchVersion getEsClusterVersion(Map<String, Object> jsonResponse){
         final Map<String, Object> versionMap = (Map<String, Object>) jsonResponse.get("version");
         final String distribution = (String) versionMap.get("distribution");
+        final String version = (String) versionMap.getOrDefault("number", "");
         if (!StringUtils.isBlank(distribution)) {
             if (distribution.equals("opensearch")) {
-                return true;
+                return ElasticSearchVersion.osFromVersionString(version);
             }
         }
-        final String version = (String) versionMap.get("number");
-        if (StringUtils.isBlank(version)) {
+        return ElasticSearchVersion.esFromVersionString(version);
+    }
+
+    private static boolean useOpenSearchHighLevelClient(ElasticSearchVersion versionInfo){
+        if (ElasticSearchVersion.ClientType.OPENSEARCH.equals(versionInfo.getClientType())) {
             return true;
         }
-        final String mainVersion = version.substring(0, version.indexOf("."));
-        try {
-            final int numVersion = Integer.parseInt(mainVersion);
-            if (numVersion <= 7) {
-                return true;
-            }
-            // For Elastic 8+ use Elastic Java client
-            return false;
-        } catch (NumberFormatException nfe) {
-            log.warn("Not able to parse version: {}", mainVersion, nfe);
+        //this also covers the case of a bad version string and no distribution (defaults to ElasticSearch)
+        if (versionInfo.getMajor() < 7 || (versionInfo.getMajor() == 7 && versionInfo.getMinor() < 14)) {
             return true;
+        }
+        // For Elastic 7.14+, 8+ use Elastic Java client
+        return false;
+    }
+
+    private static void validateBatchSourceConfig(ElasticSearchVersion clusterVersion,
+                                                  ElasticSearchBatchSourceConfig config){
+        switch (config.getPagingType()) {
+            case PIT -> validatePitConfig(clusterVersion);
+            case SCROLL -> validateScrollConfig(clusterVersion);
+        }
+    }
+
+    private static void validatePitConfig(ElasticSearchVersion clusterVersion){
+        String message = "";
+        switch (clusterVersion.getClientType()) {
+            case ELASTICSEARCH -> {
+                if (clusterVersion.getMajor() <= 7 && clusterVersion.getMinor() < 10) {
+                    message = "Point in Time API is not supported in prior to ElasticSearch 7.10.0. "
+                            + "Please use Scroll API instead";
+                    log.error(message);
+                }
+            }
+            case OPENSEARCH -> {
+                if (clusterVersion.getMajor() <= 2 && clusterVersion.getMinor() < 4) {
+                    message = "Point in Time API is not supported in prior to OpenSearch 2.4.0. "
+                            + "Please use Scroll API instead";
+                    log.error(message);
+                }
+            }
+        }
+        if (StringUtils.isNotBlank(message)){
+            throw new IllegalArgumentException(message);
+        }
+    }
+
+    private static void validateScrollConfig(ElasticSearchVersion clusterVersion){
+        switch (clusterVersion.getClientType()) {
+            case ELASTICSEARCH -> {
+                if (clusterVersion.getMajor() >= 8) {
+                    log.warn("Scroll API is deprecated in ElasticSearch 8.0.0. Please use Point in Time API instead.");
+                }
+            }
+            case OPENSEARCH -> {
+            }
         }
     }
 

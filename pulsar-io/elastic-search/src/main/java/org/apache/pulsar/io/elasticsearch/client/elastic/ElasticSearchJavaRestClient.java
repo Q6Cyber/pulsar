@@ -18,6 +18,7 @@
  */
 package org.apache.pulsar.io.elasticsearch.client.elastic;
 
+import co.elastic.clients.elasticsearch.ElasticsearchAsyncClient;
 import co.elastic.clients.elasticsearch.ElasticsearchClient;
 import co.elastic.clients.elasticsearch._types.ElasticsearchException;
 import co.elastic.clients.elasticsearch._types.Result;
@@ -36,9 +37,6 @@ import co.elastic.clients.elasticsearch.indices.RefreshRequest;
 import co.elastic.clients.json.jackson.JacksonJsonpMapper;
 import co.elastic.clients.transport.ElasticsearchTransport;
 import co.elastic.clients.transport.rest_client.RestClientTransport;
-import com.fasterxml.jackson.annotation.JsonInclude;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.SerializationFeature;
 import com.google.common.annotations.VisibleForTesting;
 import java.io.IOException;
 import java.util.Map;
@@ -48,6 +46,7 @@ import org.apache.http.HttpHost;
 import org.apache.pulsar.io.elasticsearch.ElasticSearchConfig;
 import org.apache.pulsar.io.elasticsearch.client.BulkProcessor;
 import org.apache.pulsar.io.elasticsearch.client.RestClient;
+import org.apache.pulsar.io.elasticsearch.client.SlicedSearchProvider;
 import org.elasticsearch.client.Node;
 import org.elasticsearch.client.RestClientBuilder;
 
@@ -55,11 +54,11 @@ import org.elasticsearch.client.RestClientBuilder;
 public class ElasticSearchJavaRestClient extends RestClient {
 
     private final ElasticsearchClient client;
-    private final ObjectMapper objectMapper = new ObjectMapper()
-            .configure(SerializationFeature.INDENT_OUTPUT, false)
-            .setSerializationInclusion(JsonInclude.Include.ALWAYS);
+    private final ElasticsearchAsyncClient asyncClient;
     private BulkProcessor bulkProcessor;
     private ElasticsearchTransport transport;
+
+    private ElasticSearchSlicedSearchProvider slicedSearchProvider;
 
     @VisibleForTesting
     public void setBulkProcessor(BulkProcessor bulkProcessor) {
@@ -92,6 +91,8 @@ public class ElasticSearchJavaRestClient extends RestClient {
                 });
         transport = new RestClientTransport(builder.build(), new JacksonJsonpMapper(objectMapper));
         client = new ElasticsearchClient(transport);
+        asyncClient = new ElasticsearchAsyncClient(transport);
+        slicedSearchProvider = new ElasticSearchSlicedSearchProvider(client, asyncClient);
         if (elasticSearchConfig.isBulkEnabled()) {
             bulkProcessor = new ElasticBulkProcessor(elasticSearchConfig, client, bulkProcessorListener);
         } else {
@@ -196,6 +197,11 @@ public class ElasticSearchJavaRestClient extends RestClient {
             throw new IllegalStateException("bulkProcessor not enabled");
         }
         return bulkProcessor;
+    }
+
+    @Override
+    public SlicedSearchProvider getSlicedSearchProvider() {
+        return slicedSearchProvider;
     }
 
     @Override

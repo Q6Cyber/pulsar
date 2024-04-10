@@ -342,7 +342,7 @@ public abstract class ElasticSearchSinkTests extends ElasticSearchTestBase {
     }
 
     private String getHitIdAtIndex(String indexName, int index) throws IOException {
-        if (elasticImageName.equals(ELASTICSEARCH_8)) {
+        if (elasticImageName.equals(ELASTICSEARCH_8) || elasticImageName.equals(ELASTICSEARCH_7)) {
             final ElasticSearchJavaRestClient restClient = (ElasticSearchJavaRestClient)
                     sink.getElasticsearchClient().getRestClient();
             return restClient.search(indexName).hits().hits().get(index).id();

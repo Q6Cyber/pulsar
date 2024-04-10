@@ -111,9 +111,9 @@ public abstract class ElasticSearchClientTests extends ElasticSearchTestBase {
         try (ElasticSearchClient client = new ElasticSearchClient(new ElasticSearchConfig()
                 .setElasticSearchUrl("http://" + container.getHttpHostAddress())
                 .setIndexName(INDEX), mock(SinkContext.class));) {
-            if (elasticImageName.equals(OPENSEARCH) || elasticImageName.equals(ELASTICSEARCH_7)) {
+            if (elasticImageName.equals(OPENSEARCH) || elasticImageName.equals(OPENSEARCH_2)) {
                 assertTrue(client.getRestClient() instanceof OpenSearchHighLevelRestClient);
-            } else {
+            } else if (elasticImageName.equals(ELASTICSEARCH_7) || elasticImageName.equals(ELASTICSEARCH_8)) {
                 assertTrue(client.getRestClient() instanceof ElasticSearchJavaRestClient);
             }
         }
@@ -414,7 +414,7 @@ public abstract class ElasticSearchClientTests extends ElasticSearchTestBase {
             MockRecord<GenericObject> mockRecord = new MockRecord<>();
             client.indexDocument(mockRecord, Pair.of("key0", "{\"a\":1,\"b\":null}"));
             final Map<String, Object> sourceAsMap;
-            if (elasticImageName.equals(ELASTICSEARCH_8)) {
+            if (elasticImageName.equals(ELASTICSEARCH_8) || elasticImageName.equals(ELASTICSEARCH_7)) {
                 final ElasticSearchJavaRestClient restClient = (ElasticSearchJavaRestClient) client.getRestClient();
                 sourceAsMap =
                         restClient.search(index, "*:*").hits().hits().get(0).source();
