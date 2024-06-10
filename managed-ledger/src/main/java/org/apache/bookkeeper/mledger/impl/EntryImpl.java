@@ -27,9 +27,10 @@ import io.netty.util.ReferenceCounted;
 import org.apache.bookkeeper.client.api.LedgerEntry;
 import org.apache.bookkeeper.mledger.Entry;
 import org.apache.bookkeeper.mledger.util.AbstractCASReferenceCounted;
+import org.apache.bookkeeper.mledger.util.RangeCache;
 
 public final class EntryImpl extends AbstractCASReferenceCounted implements Entry, Comparable<EntryImpl>,
-        ReferenceCounted {
+        RangeCache.ValueWithKeyValidation<PositionImpl> {
 
     private static final Recycler<EntryImpl> RECYCLER = new Recycler<EntryImpl>() {
         @Override
@@ -42,6 +43,7 @@ public final class EntryImpl extends AbstractCASReferenceCounted implements Entr
     private long timestamp;
     private long ledgerId;
     private long entryId;
+    private PositionImpl position;
     ByteBuf data;
 
     private Runnable onDeallocate;
@@ -151,7 +153,10 @@ public final class EntryImpl extends AbstractCASReferenceCounted implements Entr
 
     @Override
     public PositionImpl getPosition() {
-        return new PositionImpl(ledgerId, entryId);
+        if (position == null) {
+            position = PositionImpl.get(ledgerId, entryId);
+        }
+        return position;
     }
 
     @Override
@@ -197,7 +202,12 @@ public final class EntryImpl extends AbstractCASReferenceCounted implements Entr
         timestamp = -1;
         ledgerId = -1;
         entryId = -1;
+        position = null;
         recyclerHandle.recycle(this);
     }
 
+    @Override
+    public boolean matchesKey(PositionImpl key) {
+        return key.compareTo(ledgerId, entryId) == 0;
+    }
 }

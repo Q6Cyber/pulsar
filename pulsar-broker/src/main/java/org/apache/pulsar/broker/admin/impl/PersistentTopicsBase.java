@@ -207,6 +207,7 @@ public class PersistentTopicsBase extends AdminResource {
     protected CompletableFuture<Map<String, Set<AuthAction>>> internalGetPermissionsOnTopic() {
         // This operation should be reading from zookeeper and it should be allowed without having admin privileges
         return validateAdminAccessForTenantAsync(namespaceName.getTenant())
+                .thenCompose(__ -> internalCheckTopicExists(topicName))
                 .thenCompose(__ -> getAuthorizationService().getPermissionsAsync(topicName));
     }
 
@@ -258,9 +259,10 @@ public class PersistentTopicsBase extends AdminResource {
                                                    Set<AuthAction> actions) {
         // This operation should be reading from zookeeper and it should be allowed without having admin privileges
         validateAdminAccessForTenantAsync(namespaceName.getTenant())
-                .thenCompose(__ -> validatePoliciesReadOnlyAccessAsync().thenCompose(unused1 ->
-                        grantPermissionsAsync(topicName, role, actions)
-                                .thenAccept(unused -> asyncResponse.resume(Response.noContent().build()))))
+                .thenCompose(__ -> validatePoliciesReadOnlyAccessAsync())
+                .thenCompose(__ -> internalCheckTopicExists(topicName))
+                .thenCompose(unused1 -> grantPermissionsAsync(topicName, role, actions))
+                .thenAccept(unused -> asyncResponse.resume(Response.noContent().build()))
                 .exceptionally(ex -> {
                     Throwable realCause = FutureUtil.unwrapCompletionException(ex);
                     log.error("[{}] Failed to get permissions for topic {}", clientAppId(), topicName, realCause);
@@ -272,6 +274,7 @@ public class PersistentTopicsBase extends AdminResource {
     protected void internalRevokePermissionsOnTopic(AsyncResponse asyncResponse, String role) {
         // This operation should be reading from zookeeper and it should be allowed without having admin privileges
         validateAdminAccessForTenantAsync(namespaceName.getTenant())
+                .thenCompose(__ -> internalCheckTopicExists(topicName))
                 .thenCompose(__ -> getPartitionedTopicMetadataAsync(topicName, true, false)
                 .thenCompose(metadata -> {
                     int numPartitions = metadata.partitions;
@@ -348,7 +351,7 @@ public class PersistentTopicsBase extends AdminResource {
                 }
                 int brokerMaximumPartitionsPerTopic = pulsarService.getConfiguration()
                         .getMaxNumPartitionsPerPartitionedTopic();
-                if (brokerMaximumPartitionsPerTopic != 0 && expectPartitions > brokerMaximumPartitionsPerTopic) {
+                if (brokerMaximumPartitionsPerTopic > 0 && expectPartitions > brokerMaximumPartitionsPerTopic) {
                     throw new RestException(422 /* Unprocessable entity*/,
                             String.format("Desired partitions %s can't be greater than the maximum partitions per"
                                             + " topic %s.",
@@ -3392,14 +3395,14 @@ public class PersistentTopicsBase extends AdminResource {
     }
 
     protected CompletableFuture<Void> internalSetReplicationClusters(List<String> clusterIds) {
-
+        if (CollectionUtils.isEmpty(clusterIds)) {
+            return CompletableFuture.failedFuture(new RestException(Status.PRECONDITION_FAILED,
+                    "ClusterIds should not be null or empty"));
+        }
+        Set<String> replicationClusters = Sets.newHashSet(clusterIds);
         return validateTopicPolicyOperationAsync(topicName, PolicyName.REPLICATION, PolicyOperation.WRITE)
                 .thenCompose(__ -> validatePoliciesReadOnlyAccessAsync())
                 .thenCompose(__ -> {
-                    if (CollectionUtils.isEmpty(clusterIds)) {
-                        throw new RestException(Status.PRECONDITION_FAILED, "ClusterIds should not be null or empty");
-                    }
-                    Set<String> replicationClusters = Sets.newHashSet(clusterIds);
                     if (replicationClusters.contains("global")) {
                         throw new RestException(Status.PRECONDITION_FAILED,
                                 "Cannot specify global in the list of replication clusters");
@@ -3414,6 +3417,20 @@ public class PersistentTopicsBase extends AdminResource {
                         futures.add(validateClusterForTenantAsync(namespaceName.getTenant(), clusterId));
                     }
                     return FutureUtil.waitForAll(futures);
+                }).thenCompose(__ -> {
+                    // Sync to create partitioned topic on the remote cluster if needed.
+                    TopicName topicNameWithoutPartition = TopicName.get(topicName.getPartitionedTopicName());
+                    return pulsar().getPulsarResources().getNamespaceResources().getPartitionedTopicResources()
+                        .getPartitionedTopicMetadataAsync(topicNameWithoutPartition).thenCompose(topicMetaOp -> {
+                            // Skip to create topic if the topic is non-partitioned, because the replicator will create
+                            // it automatically.
+                            if (topicMetaOp.isEmpty()) {
+                                return CompletableFuture.completedFuture(null);
+                            }
+                            return FutureUtil.waitForAll(
+                                    internalCreatePartitionedTopicToReplicatedClustersInBackground(replicationClusters,
+                                    topicMetaOp.get().partitions).values());
+                        });
                 }).thenCompose(__ ->
                     getTopicPoliciesAsyncWithRetry(topicName).thenCompose(op -> {
                             TopicPolicies topicPolicies = op.orElseGet(TopicPolicies::new);

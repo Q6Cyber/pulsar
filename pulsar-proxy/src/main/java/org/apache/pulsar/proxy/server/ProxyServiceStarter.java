@@ -26,6 +26,7 @@ import static org.apache.pulsar.common.stats.JvmMetrics.getJvmDirectMemoryUsed;
 import com.beust.jcommander.JCommander;
 import com.beust.jcommander.Parameter;
 import com.google.common.annotations.VisibleForTesting;
+import io.prometheus.client.Collector;
 import io.prometheus.client.CollectorRegistry;
 import io.prometheus.client.Gauge;
 import io.prometheus.client.Gauge.Child;
@@ -36,6 +37,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.Date;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 import lombok.Getter;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.core.util.datetime.FixedDateFormat;
@@ -105,8 +107,15 @@ public class ProxyServiceStarter {
     private WebServer server;
     private WebSocketService webSocketService;
     private static boolean metricsInitialized;
+    private boolean embeddedMode;
 
     public ProxyServiceStarter(String[] args) throws Exception {
+        this(args, null, false);
+    }
+
+    public ProxyServiceStarter(String[] args, Consumer<ProxyConfiguration> proxyConfigurationCustomizer,
+                               boolean embeddedMode) throws Exception {
+        this.embeddedMode = embeddedMode;
         try {
             DateFormat dateFormat = new SimpleDateFormat(
                 FixedDateFormat.FixedFormat.ISO8601_OFFSET_DATE_TIME_HHMM.getPattern());
@@ -129,15 +138,26 @@ public class ProxyServiceStarter {
                     CmdGenerateDocs cmd = new CmdGenerateDocs("pulsar");
                     cmd.addCommand("proxy", this);
                     cmd.run(null);
-                    System.exit(0);
+                    if (embeddedMode) {
+                        return;
+                    } else {
+                        System.exit(0);
+                    }
                 }
             } catch (Exception e) {
                 jcommander.usage();
-                System.exit(1);
+                if (embeddedMode) {
+                    return;
+                } else {
+                    System.exit(1);
+                }
             }
 
             // load config file
             config = PulsarConfigurationLoader.create(configFile, ProxyConfiguration.class);
+            if (proxyConfigurationCustomizer != null) {
+                proxyConfigurationCustomizer.accept(config);
+            }
 
             if (!isBlank(zookeeperServers)) {
                 // Use zookeeperServers from command line
@@ -227,28 +247,45 @@ public class ProxyServiceStarter {
         // create a web-service
         server = new WebServer(config, authenticationService);
 
-        Runtime.getRuntime().addShutdownHook(new Thread(this::close));
+        if (!embeddedMode) {
+            Runtime.getRuntime().addShutdownHook(new Thread(this::close));
+        }
 
         proxyService.start();
 
         if (!metricsInitialized) {
             // Setup metrics
             DefaultExports.initialize();
+            CollectorRegistry registry = CollectorRegistry.defaultRegistry;
 
             // Report direct memory from Netty counters
-            Gauge.build("jvm_memory_direct_bytes_used", "-").create().setChild(new Child() {
-                @Override
-                public double get() {
-                    return getJvmDirectMemoryUsed();
-                }
-            }).register(CollectorRegistry.defaultRegistry);
+            Collector jvmMemoryDirectBytesUsed =
+                    Gauge.build("jvm_memory_direct_bytes_used", "-").create().setChild(new Child() {
+                        @Override
+                        public double get() {
+                            return getJvmDirectMemoryUsed();
+                        }
+                    });
+            try {
+                registry.register(jvmMemoryDirectBytesUsed);
+            } catch (IllegalArgumentException e) {
+                // workaround issue in tests where the metric is already registered
+                log.debug("Failed to register jvm_memory_direct_bytes_used metric: {}", e.getMessage());
+            }
 
-            Gauge.build("jvm_memory_direct_bytes_max", "-").create().setChild(new Child() {
-                @Override
-                public double get() {
-                    return DirectMemoryUtils.jvmMaxDirectMemory();
-                }
-            }).register(CollectorRegistry.defaultRegistry);
+            Collector jvmMemoryDirectBytesMax =
+                    Gauge.build("jvm_memory_direct_bytes_max", "-").create().setChild(new Child() {
+                        @Override
+                        public double get() {
+                            return DirectMemoryUtils.jvmMaxDirectMemory();
+                        }
+                    });
+            try {
+                registry.register(jvmMemoryDirectBytesMax);
+            } catch (IllegalArgumentException e) {
+                // workaround issue in tests where the metric is already registered
+                log.debug("Failed to register jvm_memory_direct_bytes_max metric: {}", e.getMessage());
+            }
 
             metricsInitialized = true;
         }
@@ -275,7 +312,9 @@ public class ProxyServiceStarter {
         } catch (Exception e) {
             log.warn("server couldn't stop gracefully {}", e.getMessage(), e);
         } finally {
-            LogManager.shutdown();
+            if (!embeddedMode) {
+                LogManager.shutdown();
+            }
         }
     }
 

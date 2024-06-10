@@ -23,7 +23,7 @@
   <parent>
     <groupId>org.apache.pulsar</groupId>
     <artifactId>docker-images</artifactId>
-    <version>3.2.3-SNAPSHOT</version>
+    <version>3.2.4-SNAPSHOT</version>
   </parent>
   <modelVersion>4.0.0</modelVersion>
   <artifactId>pulsar-docker-image</artifactId>
@@ -52,7 +52,7 @@
       <id>git-commit-id-no-git</id>
       <activation>
         <file>
-          <missing>${basedir}/../../.git/index</missing>
+          <missing>${basedir}/../../.git</missing>
         </file>
       </activation>
       <properties>
