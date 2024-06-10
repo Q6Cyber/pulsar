@@ -64,8 +64,13 @@ import org.opensearch.search.sort.SortBuilders;
 public class OpenSearchSlicedSearchProvider extends SlicedSearchProvider<SearchResponse, SearchHit> {
 
     private RestHighLevelClient client;
+    private final RequestOptions requestOptions;
     public OpenSearchSlicedSearchProvider(RestHighLevelClient elasticsearchClient) {
+        this(elasticsearchClient, RequestOptions.DEFAULT);
+    }
+    public OpenSearchSlicedSearchProvider(RestHighLevelClient elasticsearchClient, RequestOptions requestOptions) {
         this.client = elasticsearchClient;
+        this.requestOptions = requestOptions;
     }
 
     private RestHighLevelClient client() {
@@ -187,7 +192,7 @@ public class OpenSearchSlicedSearchProvider extends SlicedSearchProvider<SearchR
         SearchRequest searchRequest = new SearchRequest();
         searchRequest.source(searchSourceBuilder);
         CompletableFuture<SearchResponse> responseFuture = new CompletableFuture<>();
-        client.searchAsync(searchRequest, RequestOptions.DEFAULT, buildActionListener(responseFuture));
+        client.searchAsync(searchRequest, requestOptions, buildActionListener(responseFuture));
         return responseFuture;
     }
 
@@ -199,7 +204,7 @@ public class OpenSearchSlicedSearchProvider extends SlicedSearchProvider<SearchR
         SearchRequest searchRequest = new SearchRequest(task.getIndex());
         searchRequest.scroll(scroll);
         searchRequest.source(searchSourceBuilder);
-        client.searchAsync(searchRequest, RequestOptions.DEFAULT, buildActionListener(responseFuture));
+        client.searchAsync(searchRequest, requestOptions, buildActionListener(responseFuture));
         return responseFuture;
     }
 
@@ -213,7 +218,7 @@ public class OpenSearchSlicedSearchProvider extends SlicedSearchProvider<SearchR
         ActionListener<SearchResponse> actionListener = buildActionListener(responseFuture);
         SearchScrollRequest scrollRequest = new SearchScrollRequest(task.getScrollId());
         scrollRequest.scroll(scroll);
-        Cancellable cancellable = client.searchScrollAsync(scrollRequest, RequestOptions.DEFAULT, actionListener);
+        Cancellable cancellable = client.searchScrollAsync(scrollRequest, requestOptions, actionListener);
         return responseFuture;
     }
 

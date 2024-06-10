@@ -56,7 +56,7 @@ import org.elasticsearch.client.RestClientBuilder;
 @Slf4j
 public class ElasticSearchJavaRestClient extends RestClient {
 
-    private final int maxRequestSize = 200 * 1048576;
+    private final int maxRequestSize = 500 * 1048576;
 
     private final ElasticsearchClient client;
     private final ElasticsearchAsyncClient asyncClient;
@@ -86,8 +86,6 @@ public class ElasticSearchJavaRestClient extends RestClient {
         requestOptionsBuilder.setHttpAsyncResponseConsumerFactory(
                 new HttpAsyncResponseConsumerFactory.HeapBufferedResponseConsumerFactory(maxRequestSize));
         RestClientOptions options = new RestClientOptions(requestOptionsBuilder.build());
-
-
         RestClientBuilder builder = org.elasticsearch.client.RestClient.builder(httpHosts)
                 .setRequestConfigCallback(builder1 -> builder1
                         .setContentCompressionEnabled(config.isCompressionEnabled())

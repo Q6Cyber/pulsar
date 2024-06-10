@@ -44,6 +44,7 @@ import org.opensearch.action.index.IndexRequest;
 import org.opensearch.action.index.IndexResponse;
 import org.opensearch.action.search.SearchRequest;
 import org.opensearch.action.search.SearchResponse;
+import org.opensearch.client.HttpAsyncResponseConsumerFactory;
 import org.opensearch.client.RequestOptions;
 import org.opensearch.client.Requests;
 import org.opensearch.client.RestClientBuilder;
@@ -99,10 +100,13 @@ public class OpenSearchHighLevelRestClient extends RestClient implements BulkPro
         }
     }
 
+    private final int maxRequestSize = 500 * 1048576;
+
     private RestHighLevelClient client;
     private org.opensearch.action.bulk.BulkProcessor internalBulkProcessor;
 
     private OpenSearchSlicedSearchProvider slicedSearchProvider;
+    private final RequestOptions requestOptions;
 
     public OpenSearchHighLevelRestClient(ElasticSearchConfig elasticSearchConfig,
                                          BulkProcessor.Listener bulkProcessorListener) {
@@ -124,14 +128,18 @@ public class OpenSearchHighLevelRestClient extends RestClient implements BulkPro
                         log.warn("Node host={} failed", node.getHost());
                     }
                 });
+        RequestOptions.Builder requestOptionsBuilder = RequestOptions.DEFAULT.toBuilder();
+        requestOptionsBuilder.setHttpAsyncResponseConsumerFactory(
+                new HttpAsyncResponseConsumerFactory.HeapBufferedResponseConsumerFactory(maxRequestSize));
+        requestOptions = requestOptionsBuilder.build();
         client = new RestHighLevelClient(builder);
-        slicedSearchProvider = new OpenSearchSlicedSearchProvider(client);
+        slicedSearchProvider = new OpenSearchSlicedSearchProvider(client, requestOptions);
         if (config.isBulkEnabled()) {
             org.opensearch.action.bulk.BulkProcessor.Builder bulkBuilder = org.opensearch.action.bulk.BulkProcessor
                     .builder(
                             (bulkRequest, bulkResponseActionListener)
                                     -> client.bulkAsync(bulkRequest,
-                                    RequestOptions.DEFAULT,
+                                    requestOptions,
                                     bulkResponseActionListener),
                             new org.opensearch.action.bulk.BulkProcessor.Listener() {
 
@@ -236,7 +244,7 @@ public class OpenSearchHighLevelRestClient extends RestClient implements BulkPro
         //types not supported in 2.x versions of the REST client.
         indexRequest.source(documentSource, XContentType.JSON);
 
-        IndexResponse indexResponse = client.index(indexRequest, RequestOptions.DEFAULT);
+        IndexResponse indexResponse = client.index(indexRequest, requestOptions);
         if (indexResponse.getResult().equals(DocWriteResponse.Result.CREATED)
                 || indexResponse.getResult().equals(DocWriteResponse.Result.UPDATED)) {
             return true;
@@ -292,7 +300,7 @@ public class OpenSearchHighLevelRestClient extends RestClient implements BulkPro
                 new SearchRequest()
                         .indices(indexName)
                         .source(new SearchSourceBuilder().query(queryBuilder))  ,
-                RequestOptions.DEFAULT);
+                requestOptions);
     }
 
     @Override
