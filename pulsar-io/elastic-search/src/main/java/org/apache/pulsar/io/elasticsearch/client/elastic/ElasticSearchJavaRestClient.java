@@ -36,6 +36,7 @@ import co.elastic.clients.elasticsearch.indices.IndexSettings;
 import co.elastic.clients.elasticsearch.indices.RefreshRequest;
 import co.elastic.clients.json.jackson.JacksonJsonpMapper;
 import co.elastic.clients.transport.ElasticsearchTransport;
+import co.elastic.clients.transport.rest_client.RestClientOptions;
 import co.elastic.clients.transport.rest_client.RestClientTransport;
 import com.google.common.annotations.VisibleForTesting;
 import java.io.IOException;
@@ -47,11 +48,15 @@ import org.apache.pulsar.io.elasticsearch.ElasticSearchConfig;
 import org.apache.pulsar.io.elasticsearch.client.BulkProcessor;
 import org.apache.pulsar.io.elasticsearch.client.RestClient;
 import org.apache.pulsar.io.elasticsearch.client.SlicedSearchProvider;
+import org.elasticsearch.client.HttpAsyncResponseConsumerFactory;
 import org.elasticsearch.client.Node;
+import org.elasticsearch.client.RequestOptions;
 import org.elasticsearch.client.RestClientBuilder;
 
 @Slf4j
 public class ElasticSearchJavaRestClient extends RestClient {
+
+    private final int maxRequestSize = 200 * 1048576;
 
     private final ElasticsearchClient client;
     private final ElasticsearchAsyncClient asyncClient;
@@ -77,6 +82,12 @@ public class ElasticSearchJavaRestClient extends RestClient {
         log.info("ElasticSearch URL {}", config.getElasticSearchUrl());
         final HttpHost[] httpHosts = getHttpHosts();
 
+        RequestOptions.Builder requestOptionsBuilder = RequestOptions.DEFAULT.toBuilder();
+        requestOptionsBuilder.setHttpAsyncResponseConsumerFactory(
+                new HttpAsyncResponseConsumerFactory.HeapBufferedResponseConsumerFactory(maxRequestSize));
+        RestClientOptions options = new RestClientOptions(requestOptionsBuilder.build());
+
+
         RestClientBuilder builder = org.elasticsearch.client.RestClient.builder(httpHosts)
                 .setRequestConfigCallback(builder1 -> builder1
                         .setContentCompressionEnabled(config.isCompressionEnabled())
@@ -91,8 +102,8 @@ public class ElasticSearchJavaRestClient extends RestClient {
                     }
                 });
         transport = new RestClientTransport(builder.build(), new JacksonJsonpMapper(objectMapper));
-        client = new ElasticsearchClient(transport);
-        asyncClient = new ElasticsearchAsyncClient(transport);
+        client = new ElasticsearchClient(transport, options);
+        asyncClient = new ElasticsearchAsyncClient(transport, options);
         slicedSearchProvider = new ElasticSearchSlicedSearchProvider(client, asyncClient);
         if (elasticSearchConfig.isBulkEnabled()) {
             bulkProcessor = new ElasticBulkProcessor(elasticSearchConfig, client, bulkProcessorListener);
