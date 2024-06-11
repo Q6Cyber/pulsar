@@ -128,7 +128,9 @@ public class OpenSearchSlicedSearchProvider extends SlicedSearchProvider<SearchR
     }
 
     public String getValueFromFieldMap(String key, Map<String, DocumentField> fieldMap) {
-        return Optional.of(fieldMap.get(key))
+        return Optional.of(key)
+                .filter(StringUtils::isNotBlank)
+                .flatMap(k -> Optional.of(fieldMap).map(m -> m.get(k)))
                 .map(DocumentField::getValue)
                 .map(Object::toString)
                 .orElse("");
