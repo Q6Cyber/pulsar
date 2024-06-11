@@ -53,6 +53,7 @@ import java.io.StringReader;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -128,8 +129,10 @@ public class ElasticSearchSlicedSearchProvider extends SlicedSearchProvider<Resp
 
     @Override
     public String buildKey(SlicedSearchTask task, Hit<JsonData> hit, Map<String, String> hitProperties) {
-        Map<String, JsonData> fieldsMap = hit.fields();
-        Map<String, List<String>> ignoreFieldsMap = hit.ignoredFieldValues();
+        Map<String, JsonData> fieldsMap = Optional.ofNullable(hit).map(Hit::fields).orElse(Collections.emptyMap());
+        Map<String, List<String>> ignoreFieldsMap = Optional.ofNullable(hit)
+                .map(Hit::ignoredFieldValues)
+                .orElse(Collections.emptyMap());
         List<String> keys = new ArrayList<>();
         for (String keyField : task.getKeyFields()) {
             Optional.of(getValueFromFieldMap(keyField, fieldsMap, ignoreFieldsMap))
@@ -150,6 +153,9 @@ public class ElasticSearchSlicedSearchProvider extends SlicedSearchProvider<Resp
 
     public String getValueFromFieldMap(String key, Map<String, JsonData> fieldMap,
                                        Map<String, List<String>> ignoredMap) {
+        if (StringUtils.isBlank(key)) {
+            return "";
+        }
         JsonValue fieldVal = Optional.ofNullable(fieldMap.get(key))
                 .map(JsonData::toJson)
                 .orElse(JsonValue.NULL);

@@ -22,8 +22,11 @@ import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import java.io.IOException;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutorService;
@@ -65,8 +68,10 @@ public abstract class SlicedSearchProvider<R, X> {
 
     protected ExecutorService executorService = Executors.newWorkStealingPool();
     public ElasticSearchRecord buildRecordFromSearchHit(SlicedSearchTask task, X hit) {
-        Map<String, String> properties = buildRecordProperties(hit);
-        byte[] source = getHitBytes(hit);
+        Map<String, String> properties = Optional.ofNullable(hit)
+                .map(this::buildRecordProperties)
+                .orElse(Collections.emptyMap());
+        byte[] source = Optional.ofNullable(hit).map(this::getHitBytes).orElse(new byte[0]);
         String key = buildKey(task, hit, properties);
         if (StringUtils.isBlank(key)) {
             key = null; //todo if key fields were configured, should this be an error?
@@ -110,6 +115,7 @@ public abstract class SlicedSearchProvider<R, X> {
             return CompletableFuture.completedFuture(null);
         }
         getHits(previousSearchResponse).stream()
+                .filter(Objects::nonNull)
                 .map(hit -> this.buildRecordFromSearchHit(task, hit))
                 .forEach(recordConsumer);
         updateTaskFromSearchResponse(task, previousSearchResponse);

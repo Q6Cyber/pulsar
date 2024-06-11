@@ -21,6 +21,7 @@ package org.apache.pulsar.io.elasticsearch.client.opensearch;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -108,9 +109,15 @@ public class OpenSearchSlicedSearchProvider extends SlicedSearchProvider<SearchR
 
     @Override
     public String buildKey(SlicedSearchTask task, SearchHit hit, Map<String, String> hitProperties) {
-        Map<String, DocumentField> fieldsMap = hit.getFields();
+        Map<String, DocumentField> fieldsMap = Optional.of(hit)
+                .map(SearchHit::getFields)
+                .orElse(Collections.emptyMap());
         List<String> keys = new ArrayList<>();
         for (String keyField : task.getKeyFields()) {
+            if (StringUtils.isBlank(keyField)
+                    || (fieldsMap.isEmpty() && hitProperties.isEmpty())) {
+                continue;
+            }
             Optional.of(getValueFromFieldMap(keyField, fieldsMap))
                     .filter(StringUtils::isNotBlank)
                     .or(() -> Optional.ofNullable(hitProperties.get(keyField)))
