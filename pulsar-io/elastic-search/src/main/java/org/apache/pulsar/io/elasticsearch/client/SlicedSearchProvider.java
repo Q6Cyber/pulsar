@@ -68,16 +68,22 @@ public abstract class SlicedSearchProvider<R, X> {
 
     protected ExecutorService executorService = Executors.newWorkStealingPool();
     public ElasticSearchRecord buildRecordFromSearchHit(SlicedSearchTask task, X hit) {
-        Map<String, String> properties = Optional.ofNullable(hit)
-                .map(this::buildRecordProperties)
-                .orElse(Collections.emptyMap());
-        byte[] source = Optional.ofNullable(hit).map(this::getHitBytes).orElse(new byte[0]);
-        String key = buildKey(task, hit, properties);
-        if (StringUtils.isBlank(key)) {
-            key = null; //todo if key fields were configured, should this be an error?
+        try {
+            Map<String, String> properties = Optional.ofNullable(hit)
+                    .map(this::buildRecordProperties)
+                    .orElse(Collections.emptyMap());
+            byte[] source = Optional.ofNullable(hit).map(this::getHitBytes).orElse(new byte[0]);
+            String key = buildKey(task, hit, properties);
+            if (StringUtils.isBlank(key)) {
+                key = null; //todo if key fields were configured, should this be an error?
+            }
+            ElasticSearchRecord record = new ElasticSearchRecord(source, key, properties);
+            return record;
+        } catch (Exception e) {
+            log.error("Error creating ElasticSearchRecord from SearchHit: {}", hit);
+            Exception reThrow = (e.getCause() != null) ? (Exception) e.getCause() : e;
+            throw new RuntimeException(reThrow);
         }
-        ElasticSearchRecord record = new ElasticSearchRecord(source, key, properties);
-        return record;
     }
 
     public CompletableFuture<Void> slicedScrollSearch(SlicedSearchTask task,
