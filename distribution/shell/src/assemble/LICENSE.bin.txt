@@ -361,7 +361,6 @@ The Apache Software License, Version 2.0
     - netty-transport-native-epoll-4.1.111.Final-linux-aarch_64.jar
     - netty-transport-native-epoll-4.1.111.Final-linux-x86_64.jar
     - netty-transport-native-unix-common-4.1.111.Final.jar
-    - netty-transport-native-unix-common-4.1.111.Final-linux-x86_64.jar
     - netty-tcnative-boringssl-static-2.0.65.Final.jar
     - netty-tcnative-boringssl-static-2.0.65.Final-linux-aarch_64.jar
     - netty-tcnative-boringssl-static-2.0.65.Final-linux-x86_64.jar
@@ -381,6 +380,8 @@ The Apache Software License, Version 2.0
     - simpleclient_tracer_common-0.16.0.jar
     - simpleclient_tracer_otel-0.16.0.jar
     - simpleclient_tracer_otel_agent-0.16.0.jar
+ * RoaringBitmap
+    - RoaringBitmap-1.1.0.jar
  * Log4J
     - log4j-api-2.18.0.jar
     - log4j-core-2.18.0.jar
@@ -388,9 +389,9 @@ The Apache Software License, Version 2.0
     - log4j-web-2.18.0.jar
 
  * BookKeeper
-    - bookkeeper-common-allocator-4.16.5.jar
-    - cpu-affinity-4.16.5.jar
-    - circe-checksum-4.16.5.jar
+    - bookkeeper-common-allocator-4.16.6.jar
+    - cpu-affinity-4.16.6.jar
+    - circe-checksum-4.16.6.jar
   * AirCompressor
      - aircompressor-0.20.jar
  * AsyncHttpClient
