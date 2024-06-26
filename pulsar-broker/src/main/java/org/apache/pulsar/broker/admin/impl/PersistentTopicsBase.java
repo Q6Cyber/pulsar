@@ -453,7 +453,14 @@ public class PersistentTopicsBase extends AdminResource {
                                 if (!policies.isPresent()) {
                                     return CompletableFuture.completedFuture(null);
                                 }
-                                final Set<String> replicationClusters = policies.get().replication_clusters;
+                                // Combine namespace level policies and topic level policies.
+                                Set<String> replicationClusters = policies.get().replication_clusters;
+                                TopicPolicies topicPolicies =
+                                        pulsarService.getTopicPoliciesService().getTopicPoliciesIfExists(topicName);
+                                if (topicPolicies != null && topicPolicies.getReplicationClusters() != null) {
+                                    replicationClusters = topicPolicies.getReplicationClustersSet();
+                                }
+                                // Do check replicated clusters.
                                 if (replicationClusters.size() == 0) {
                                     return CompletableFuture.completedFuture(null);
                                 }
@@ -469,6 +476,7 @@ public class PersistentTopicsBase extends AdminResource {
                                     // The replication clusters just has the current cluster itself.
                                     return CompletableFuture.completedFuture(null);
                                 }
+                                // Do sync operation to other clusters.
                                 List<CompletableFuture<Void>> futures = replicationClusters.stream()
                                         .map(replicationCluster -> admin.clusters().getClusterAsync(replicationCluster)
                                                 .thenCompose(clusterData -> pulsarService.getBrokerService()
@@ -3402,12 +3410,13 @@ public class PersistentTopicsBase extends AdminResource {
         Set<String> replicationClusters = Sets.newHashSet(clusterIds);
         return validateTopicPolicyOperationAsync(topicName, PolicyName.REPLICATION, PolicyOperation.WRITE)
                 .thenCompose(__ -> validatePoliciesReadOnlyAccessAsync())
-                .thenCompose(__ -> {
+                .thenAccept(__ -> {
                     if (replicationClusters.contains("global")) {
                         throw new RestException(Status.PRECONDITION_FAILED,
                                 "Cannot specify global in the list of replication clusters");
                     }
-                    Set<String> clusters = clusters();
+                }).thenCompose(__ -> clustersAsync())
+                .thenCompose(clusters -> {
                     List<CompletableFuture<Void>> futures = new ArrayList<>(replicationClusters.size());
                     for (String clusterId : replicationClusters) {
                         if (!clusters.contains(clusterId)) {
